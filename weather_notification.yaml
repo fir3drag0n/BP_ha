@@ -1,0 +1,165 @@
+blueprint:
+  name: Wettervorhersage-Benachrichtigung
+  description: Senden Sie eine anpassbare Benachrichtigung über die Wettervorhersage für heute und morgen.
+  domain: automation
+  input:
+    weather_entity:
+      name: Wetter-Entität
+      description: Die von Ihnen verwendete Wetterintegration.
+      selector:
+        entity:
+          filter:
+            - domain: weather
+            
+    alternative_weather_entity:
+      name: Alternative Wetter-Entität
+      description: Alternative Wetter-Entität für Windrichtung.
+      selector:
+        entity:
+          filter:
+            - domain: weather
+            
+    notify_device:
+      name: Gerät für Benachrichtigung
+      description: Gerät muss die offizielle Home Assistant Companion App ausführen, um Benachrichtigungen zu erhalten.
+      selector:
+        device:
+          multiple: true
+          integration: mobile_app
+          
+    time:
+      name: Zeittrigger
+      description: Die Zeit, zu der die Automatisierung ausgelöst und die Benachrichtigung gesendet wird.
+      selector:
+        time:
+
+    notification_title:
+      name: Titel der Benachrichtigung (optional)
+      description: Der Titel der Benachrichtigung.
+      default: "Wettervorhersage"
+
+    notify_message:
+      name: Benachrichtigung für das heutige Wetter
+      description: >-
+        Ein Beispiel, wie das Wetter angezeigt wird. Die in Ihrer Wetterintegration konfigurierten Einheiten werden verwendet.
+        
+        Zustand: Starker Regen  
+        Temp: 8.4 // 4.0 °C  
+        Niederschlag: 8.6 mm  
+        Windgeschwindigkeit: 24.1 km/h // Windrichtung: 273
+      default: condition
+      selector:
+        select:
+          mode: list
+          multiple: true
+          options:
+            - label: Wetterzustand
+              value: "condition"
+            - label: Temperatur
+              value: "temperature"
+            - label: Niederschlag
+              value: "precipitation"
+            - label: Wind
+              value: "wind"
+ 
+    tomorrow_message:
+      name: Benachrichtigung für das morgige Wetter
+      description: >-
+        Ein Beispiel, wie das Wetter angezeigt wird. Die in Ihrer Wetterintegration konfigurierten Einheiten werden verwendet.
+        
+        Morgen: Regen, Temp: 13.2 // 11.7 °C, Niederschlag: 2.5 mm
+      default: tomorrow
+      selector:
+        select:
+          mode: dropdown
+          options:
+            - label: Ja - Informationen für das morgige Wetter senden
+              value: "tomorrow"
+            - label: Nein - Keine Informationen für das morgige Wetter senden
+              value: "noTomorrow"
+              
+variables:
+  notify_device: !input notify_device
+  weather_entity: !input weather_entity
+  alternative_weather_entity: !input alternative_weather_entity
+  notification_title: !input notification_title
+  time: !input time
+  device_id: !input notify_device
+  notify_message: !input notify_message
+  tomorrow_message: !input tomorrow_message
+
+trigger:
+  platform: time
+  at: !input time
+
+action:
+  - service: weather.get_forecasts
+    data:
+      type: daily
+    target:
+      entity_id: !input weather_entity
+    response_variable: daily
+    
+  - variables:
+      weather_entity: !input weather_entity
+      forecast: "{{ daily[weather_entity].forecast }}"
+      icon: >- 
+        {% set cond_now = forecast[0].condition %}
+        {% if cond_now == 'cloudy' %}mdi:clouds
+        {% elif cond_now == 'fog' %}mdi:weather-fog
+        {% elif cond_now == 'hail' %}mdi:weather-hail
+        {% elif cond_now == 'lightning' %}mdi:weather-lightning
+        {% elif cond_now == 'lightning-rainy' %}mdi:weather-lightning-rainy
+        {% elif cond_now == 'partlycloudy' %}mdi:weather-partly-cloudy
+        {% elif cond_now == 'pouring' %}mdi:weather-pouring
+        {% elif cond_now == 'rainy' %}mdi:weather-rainy
+        {% elif cond_now == 'snowy' %}mdi:weather-snowy
+        {% elif cond_now == 'snowy-rainy' %}mdi:weather-snowy-rainy
+        {% elif cond_now == 'sunny' %}mdi:weather-sunny
+        {% elif cond_now == 'windy' %}mdi:weather-windy
+        {% elif cond_now == 'windy-variant' %}mdi:weather-windy-variant
+        {% elif cond_now == 'exceptional' %}mdi:cloud-alert
+        {% else %}mdi:sun-thermometer{% endif %}
+ 
+  - repeat:
+      for_each: !input notify_device
+      sequence: 
+        - service: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+          data:
+            title: "{{ notification_title }}"
+            message: >
+              {% set translations = {
+                'cloudy': 'Bewölkt',
+                'fog': 'Nebel',
+                'hail': 'Hagel',
+                'lightning': 'Blitze',
+                'lightning-rainy': 'Gewitterregen',
+                'partlycloudy': 'Teilweise bewölkt',
+                'pouring': 'Starker Regen',
+                'rainy': 'Regnerisch',
+                'snowy': 'Schneefall',
+                'snowy-rainy': 'Schneeregen',
+                'sunny': 'Sonnig',
+                'windy': 'Windig',
+                'windy-variant': 'Windig',
+                'exceptional': 'Außergewöhnlich'
+              } %}
+              
+              {% for message in notify_message %}
+                {% if "condition" in message %}Zustand: {{ translations.get(forecast[0].condition, 'Unbekannt') }}{% endif %}
+                {% if "temperature" in message %}Temp: {{forecast[0].temperature}} // {{forecast[0].templow}} {{ state_attr(weather_entity, 'temperature_unit') }}{% endif %}
+                {% if "precipitation" in message %}Niederschlag: {{forecast[0].precipitation}} {{ state_attr(weather_entity, 'precipitation_unit') }}{% endif %}
+                {% if "wind" in message %}
+                  Windgeschwindigkeit: {{forecast[0].wind_speed}} {{ state_attr(weather_entity, 'wind_speed_unit') }} // 
+                  {% set wind_direction = state_attr(alternative_weather_entity, 'wind_bearing') %}
+                  Windrichtung: {{ wind_direction if wind_direction is not none else 'Unbekannt'}}
+                {% endif %}
+              {% endfor %}
+    
+              {% if tomorrow_message == 'tomorrow' %}
+                {{"\r\n"}}Morgen: 
+                Temp: {{forecast[1].temperature}} // {{forecast[1].templow}} {{ state_attr(weather_entity, 'temperature_unit') }},
+                Niederschlag: {{forecast[1].precipitation}} {{ state_attr(weather_entity, 'precipitation_unit') }}
+              {% endif %}
+            data:
+              notification_icon: "{{ icon }}"
