@@ -31,7 +31,7 @@ blueprint:
     **Version**: 22.0
 
   domain: automation
-  source_url: https://example.com/blueprints/dynamische_abdeckung_v22.yaml
+  source_url: https://raw.githubusercontent.com/fir3drag0n/BP_ha/main/dynamische_abdeckung_v22.yaml
   homeassistant:
     min_version: "2024.10.0"
 
