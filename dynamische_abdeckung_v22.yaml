@@ -1,0 +1,1658 @@
+blueprint:
+  name: "🪟 Dynamische Abdeckungs-Steuerung V22"
+  description: >
+    Steuert Abdeckungen (Rollläden / Jalousien / Vorhänge) mit Prioritäten,
+    Hysterese, Blockern und Lamellen-Steuerung.
+
+
+    > 🔥 Hitzeschutz mit Hysterese (Prio 0)
+
+    🔋 Solar-Ladezeit (Prio 1)
+
+    ☀️ Sonnenstandsteuerung (Prio 2)
+
+    💡 Helligkeitssteuerung (Prio 3)
+
+    🗓️ Zeitplansteuerung (Prio 4)
+
+    🪟 Fenster-/Tür-Erkennung (custom 3-State + binary_sensor)
+
+    🌬️ Ventilationsposition bei offenem/gekipptem Fenster
+
+    🔄 Tilt/Lamellen-Steuerung für Jalousien
+
+    🛑 Manuelle Override-Erkennung
+
+    📐 Toleranzband (±2%) gegen Pendeln
+
+    🐛 Debug-Logging
+
+
+    **Version**: 22.0
+
+  domain: automation
+  source_url: https://example.com/blueprints/dynamische_abdeckung_v22.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+
+  input:
+    # ================================================================
+    # SEKTION: Abdeckung & Grundeinstellungen
+    # ================================================================
+    cover_section:
+      name: 🪟 Abdeckung & Grundeinstellungen
+      icon: mdi:blinds
+      description: >
+        Wähle die zu steuernden Abdeckungen und die Standard-Offen-Position.
+        Mehrere Covers möglich (z.B. alle Rollläden einer Fensterfront).
+      input:
+        target_covers:
+          name: "🪟 Abdeckung(en)"
+          description: >
+            Eine oder mehrere Abdeckungen (Rollladen, Jalousie, Vorhang etc.)
+
+
+            **Mehrere Covers** nur sinnvoll wenn sie synchron fahren sollen
+            (z.B. zwei Rollläden an der gleichen Fensterfront mit gleichem
+            Fenstersensor und gleicher Ausrichtung).
+
+
+            Für Covers mit unterschiedlichen Sensoren, Ausrichtungen oder
+            Fenstern → **separate Blueprint-Instanz** pro Cover/Gruppe anlegen.
+
+
+            Das erste Cover dient als Referenz für die aktuelle Position
+            und den Auto-Override.
+          selector:
+            entity:
+              domain: cover
+              multiple: true
+
+        position_open:
+          name: "📐 Geöffnet-Position"
+          description: >
+            Position bei 'offen' (0 = komplett zu, 100 = komplett offen)
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: "%"
+          default: 100
+
+        position_tolerance:
+          name: "📐 Positions-Toleranz (%)"
+          description: >
+            Abdeckung wird nur gefahren wenn die Abweichung größer als dieser Wert ist.
+            Verhindert Pendeln bei Covers die ±1-2% ungenau melden.
+          selector:
+            number:
+              min: 0
+              max: 10
+              unit_of_measurement: "%"
+          default: 2
+
+        enable_debug_log:
+          name: "🐛 Debug-Logging"
+          description: >
+            Aktiviert detaillierte Log-Einträge unter system_log.
+          selector:
+            boolean: {}
+          default: true
+
+    # ================================================================
+    # SEKTION: Hitzeschutz
+    # ================================================================
+    heat_section:
+      name: "🔥 Prio 0 — Hitzeschutz (höchste)"
+      icon: mdi:thermometer-alert
+      description: >
+        Höchste Priorität. Hitzeschutz wird nur aktiv wenn **ALLE** Bedingungen
+        gleichzeitig erfüllt sind:
+
+
+        ✅ Sommermodus an
+
+        ✅ Innerhalb Zeitfenster (Start- bis Endzeit)
+
+        ✅ Sonne im Azimut-Bereich
+
+        ✅ Wolkenbedeckung unter Maximum
+
+        ✅ Temperatur über Aktivierungs-Schwelle (mit Hysterese)
+
+        ✅ Helligkeit über Mindest-Lux (wenn konfiguriert)
+
+
+        **Beispiel:** Temp ≥ 25°C UND Lux ≥ 300 → Hitzeschutz aktiv.
+        Wolke zieht durch (Lux fällt) → Hitzeschutz pausiert.
+        Sonne kommt zurück → Hitzeschutz wieder aktiv (Temp noch über Schwelle).
+      collapsed: true
+      input:
+        summer_mode_boolean:
+          name: "☀️ Sommermodus"
+          description: >
+            `optional` — Muss 'on' sein damit Hitzeschutz aktiv wird.
+          selector:
+            entity:
+              domain: input_boolean
+          default: ""
+
+        temp_sensor:
+          name: "🌡️ Temperatursensor"
+          description: >
+            `optional` — Ohne Sensor kein Hitzeschutz.
+          selector:
+            entity:
+              domain: sensor
+              device_class: temperature
+          default: ""
+
+        hysteresis_heat_boolean:
+          name: "🔄 Hysterese-Helfer (input_boolean / Toggle)"
+          description: >
+            `optional`
+
+
+            Erstelle unter **Einstellungen → Helfer → + → Schalter (Toggle)** einen
+            neuen Helfer, z.B. `input_boolean.hysterese_hitze_wohnzimmer`.
+
+
+            Das Blueprint schaltet diesen Helfer automatisch on/off um sich den
+            Hysterese-Zustand zu merken. Dadurch pendelt der Hitzeschutz nicht
+            wenn die Temperatur um den Schwellwert schwankt.
+
+
+            **Ohne diesen Helfer ist kein Hitzeschutz möglich.**
+          selector:
+            entity:
+              domain: input_boolean
+          default: ""
+
+        temp_threshold_heat_activate:
+          name: "🔺 Aktivieren ab (°C)"
+          selector:
+            number:
+              min: 0
+              max: 50
+              unit_of_measurement: "°C"
+          default: 25
+
+        temp_threshold_heat_deactivate:
+          name: "🔻 Deaktivieren unter (°C)"
+          selector:
+            number:
+              min: 0
+              max: 50
+              unit_of_measurement: "°C"
+          default: 22
+
+        position_heat_close:
+          name: "🔥 Position Hitzeschutz"
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: "%"
+          default: 15
+
+        temp_mode_time_start:
+          name: "⏰ Startzeit"
+          selector:
+            time: {}
+          default: "11:00:00"
+
+        temp_mode_time_end:
+          name: "⏰ Endzeit"
+          selector:
+            time: {}
+          default: "17:00:00"
+
+        azimuth_start:
+          name: "🧭 Azimut Start"
+          selector:
+            number:
+              min: 0
+              max: 360
+              step: 0.01
+              unit_of_measurement: "°"
+          default: 0
+
+        azimuth_end:
+          name: "🧭 Azimut Ende"
+          description: >
+            Wrap-Around (z.B. 350→30) wird unterstützt.
+          selector:
+            number:
+              min: 0
+              max: 360
+              step: 0.01
+              unit_of_measurement: "°"
+          default: 360
+
+        cloud_coverage_sensor:
+          name: "☁️ Wolkenbedeckung-Sensor"
+          description: >
+            `optional` — Sensor mit Bewölkung in %.
+          selector:
+            entity:
+              domain: sensor
+          default: ""
+
+        cloud_coverage_max_heat:
+          name: "☁️ Max. Wolkenbedeckung (%)"
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: "%"
+          default: 80
+
+        heat_lux_min:
+          name: "💡 Min. Helligkeit für Hitzeschutz (Lux)"
+          description: >
+            Hitzeschutz nur aktiv wenn der Lux-Sensor (aus der Helligkeits-Sektion)
+            **über** diesem Wert liegt.
+
+
+            Zusammen mit der Temperatur-Schwelle ergibt sich:
+            Hitzeschutz aktiv wenn **Temp ≥ Schwelle UND Lux ≥ dieser Wert**.
+
+
+            Verhindert dass der Hitzeschutz bei warmem Wetter im Schatten
+            oder bei Bewölkung aktiv wird.
+
+
+            Auf `0` setzen um die Lux-Bedingung zu deaktivieren (nur Temperatur zählt).
+
+
+            **Typische Werte:** 200–500 Lux für direkte Sonneneinstrahlung.
+          selector:
+            number:
+              min: 0
+              max: 100000
+          default: 300
+
+    # ================================================================
+    # PRIO 1: Solar-Ladezeit
+    # ================================================================
+    solar_section:
+      name: "🔋 Prio 1 — Solar-Ladezeit"
+      icon: mdi:solar-power
+      description: >
+        Fährt Vorhänge/Rollos in eine Ladeposition damit Solarmodule
+        am Fenster Strom erzeugen können.
+
+
+        **Steuerung über Zeitfenster UND/ODER Helligkeit:**
+
+        `time` — Nur festes Zeitfenster (z.B. 12:00–16:00)
+
+        `brightness` — Nur Helligkeitsschwellwert (Solarposition wenn hell genug)
+
+        `time_and_brightness` — Beides muss erfüllt sein
+
+        `time_or_brightness` — Eines reicht
+
+        `disabled` — Solar-Ladezeit deaktiviert
+
+
+        **Helligkeitssensor:** Kann ein Lux-Sensor (z.B. 0–100000 lx) oder
+        ein Lichtstärke-Sensor der Solarmodule (z.B. 0–20) sein.
+        Den Schwellwert entsprechend anpassen.
+      collapsed: true
+      input:
+        solar_mode:
+          name: "🔋 Solar-Modus"
+          description: >
+            Wann die Solar-Ladeposition gefahren wird.
+          selector:
+            select:
+              mode: dropdown
+              options:
+                - time
+                - brightness
+                - time_and_brightness
+                - time_or_brightness
+                - disabled
+          default: "disabled"
+
+        position_solar:
+          name: "🔋 Solar-Position (%)"
+          description: >
+            Position während der Ladezeit (z.B. 70% = Vorhang teilweise offen
+            damit Solarmodul Licht bekommt).
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: "%"
+          default: 70
+
+        solar_brightness_sensor:
+          name: "💡 Solar-Helligkeitssensor"
+          description: >
+            `optional`
+
+
+            Eigener Sensor für die Solar-Ladezeit.
+            Kann ein Lux-Sensor (z.B. `sensor.outdoor_illuminance`) oder
+            ein Lichtstärke-Sensor der Solarmodule (z.B. `sensor.solar_light_intensity`,
+            Bereich 0–20) sein.
+
+
+            Wenn leer, wird der Lux-Sensor aus der Helligkeits-Sektion verwendet.
+          selector:
+            entity:
+              domain: sensor
+          default: ""
+
+        solar_brightness_threshold:
+          name: "💡 Solar Helligkeits-Schwellwert"
+          description: >
+            Solarposition wird gefahren wenn der Sensor-Wert **über** diesem Schwellwert liegt.
+
+
+            Für **Lux-Sensor**: z.B. `500` (= 500 lx)
+
+            Für **Solarmodul-Lichtstärke**: z.B. `5` (= Stufe 5 von 20)
+          selector:
+            number:
+              min: 0
+              max: 100000
+              step: 0.1
+          default: 500
+
+        solar_time_start:
+          name: "⏰ Solar Startzeit"
+          description: >
+            Ab wann die Ladezeit gilt. Nur für Modi mit `time`.
+          selector:
+            time: {}
+          default: "12:00:00"
+
+        solar_time_end:
+          name: "⏰ Solar Endzeit"
+          description: >
+            Bis wann die Ladezeit gilt.
+          selector:
+            time: {}
+          default: "16:00:00"
+
+    # ================================================================
+    # SEKTION: Sonnenstand
+    # ================================================================
+    sun_section:
+      name: "☀️ Prio 2 — Sonnenstand"
+      icon: mdi:weather-sunny
+      description: >
+        Steuert nach Sonnenhöhe (Elevation) und/oder Sonnenaufgang/-untergang.
+
+
+        **Einfacher Modus**: Sonnenaufgang → öffnen, Sonnenuntergang → schließen.
+        Nutzt `next_rising` / `next_setting` der Sun-Entity.
+
+
+        **Manueller Modus**: Eigene Elevation-Schwellwerte für Öffnen/Schließen.
+        Auf -1000 setzen um zu deaktivieren.
+
+
+        **Azimut-Filter**: Optional nur bei bestimmtem Sonnenwinkel aktiv
+        (z.B. nur wenn Sonne auf die Fensterfront scheint).
+      collapsed: true
+      input:
+        sun_entity:
+          name: "☀️ Sun-Entity"
+          description: >
+            `optional`
+
+
+            Normalerweise `sun.sun`. Kann bei mehreren Standorten
+            auch eine andere Sun-Entity sein.
+          selector:
+            entity:
+              domain: sun
+          default: "sun.sun"
+
+        sun_mode:
+          name: "☀️ Modus"
+          description: >
+            **sunrise_sunset**: Öffnet bei Sonnenaufgang, schließt bei Sonnenuntergang.
+            Einfachste Konfiguration, keine Schwellwerte nötig.
+
+
+            **elevation**: Öffnet/schließt nach eigenen Elevation-Schwellwerten.
+
+
+            **disabled**: Sonnensteuerung deaktiviert.
+          selector:
+            select:
+              mode: dropdown
+              options:
+                - sunrise_sunset
+                - elevation
+                - disabled
+          default: "disabled"
+
+        sunrise_offset_min:
+          name: "🌅 Offset Sonnenaufgang (Minuten)"
+          description: >
+            Nur im Modus `sunrise_sunset`.
+
+
+            Positiv = später öffnen (z.B. `30` = 30 Min nach Aufgang).
+
+            Negativ = früher öffnen (z.B. `-20` = 20 Min vor Aufgang).
+          selector:
+            number:
+              min: -120
+              max: 120
+              unit_of_measurement: "min"
+          default: 0
+
+        sunset_offset_min:
+          name: "🌇 Offset Sonnenuntergang (Minuten)"
+          description: >
+            Nur im Modus `sunrise_sunset`.
+
+
+            Negativ = früher schließen (z.B. `-30` = 30 Min vor Untergang).
+
+            Positiv = später schließen (z.B. `15` = 15 Min nach Untergang).
+          selector:
+            number:
+              min: -120
+              max: 120
+              unit_of_measurement: "min"
+          default: 0
+
+        elevation_open_threshold:
+          name: "☀️ Elevation: Öffnen über (°)"
+          description: >
+            Nur im Modus `elevation`. Öffnet wenn Sonnenhöhe über diesem Wert.
+          selector:
+            number:
+              min: -90
+              max: 90
+              step: 0.01
+              unit_of_measurement: "°"
+          default: 0
+
+        elevation_close_threshold:
+          name: "🌅 Elevation: Schließen unter (°)"
+          description: >
+            Nur im Modus `elevation`. Schließt wenn Sonnenhöhe unter diesem Wert.
+          selector:
+            number:
+              min: -90
+              max: 90
+              step: 0.01
+              unit_of_measurement: "°"
+          default: -5
+
+        sun_azimuth_start:
+          name: "🧭 Azimut Start (Sonnenstand-Prio)"
+          description: >
+            `optional`
+
+
+            Sonnenstand-Prio nur aktiv wenn Azimut in diesem Bereich.
+            0 + 360 = immer aktiv. Wrap-Around wird unterstützt.
+          selector:
+            number:
+              min: 0
+              max: 360
+              step: 0.01
+              unit_of_measurement: "°"
+          default: 0
+
+        sun_azimuth_end:
+          name: "🧭 Azimut Ende (Sonnenstand-Prio)"
+          description: >
+            `optional`
+
+
+            Sonnenstand-Prio nur aktiv wenn Azimut in diesem Bereich.
+          selector:
+            number:
+              min: 0
+              max: 360
+              step: 0.01
+              unit_of_measurement: "°"
+          default: 360
+
+        position_sun_close:
+          name: "🌅 Position bei niedriger Sonne / Sonnenuntergang"
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: "%"
+          default: 0
+
+    # ================================================================
+    # SEKTION: Helligkeit (Lux)
+    # ================================================================
+    lux_section:
+      name: "💡 Prio 3 — Helligkeit / Lux"
+      icon: mdi:brightness-6
+      description: >
+        Steuert nach Helligkeitswerten mit Hysterese.
+        Vier Schwellwerte ermöglichen saubere Übergänge ohne Pendeln.
+      collapsed: true
+      input:
+        lux_sensor:
+          name: "💡 Helligkeitssensor"
+          description: >
+            `optional`
+
+
+            Illuminance-Sensor (z.B. Außenhelligkeit).
+          selector:
+            entity:
+              domain: sensor
+              device_class: illuminance
+          default: ""
+
+        position_lux_close:
+          name: "🌑 Position bei Dunkelheit"
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: "%"
+          default: 0
+
+        lux_threshold_open_activate:
+          name: "⬆️ Öffnen aktivieren ab (Lux)"
+          description: >
+            Überschreitet Lux diesen Wert → öffnen.
+          selector:
+            number:
+              min: 0
+              max: 100000
+          default: 300
+
+        lux_threshold_open_deactivate:
+          name: "⬆️ Öffnen halten über (Lux)"
+          description: >
+            Hysterese: bleibt offen solange Lux darüber.
+            Sollte kleiner sein als 'Öffnen aktivieren'.
+          selector:
+            number:
+              min: 0
+              max: 100000
+          default: 250
+
+        lux_threshold_close_activate:
+          name: "⬇️ Schließen aktivieren unter (Lux)"
+          description: >
+            Unterschreitet Lux diesen Wert → schließen.
+          selector:
+            number:
+              min: 0
+              max: 100000
+          default: 150
+
+        lux_threshold_close_deactivate:
+          name: "⬇️ Schließen halten unter (Lux)"
+          description: >
+            Hysterese: bleibt geschlossen solange Lux darunter.
+            Sollte größer sein als 'Schließen aktivieren'.
+          selector:
+            number:
+              min: 0
+              max: 100000
+          default: 200
+
+    # ================================================================
+    # SEKTION: Zeitsteuerung
+    # ================================================================
+    schedule_section:
+      name: "🗓️ Prio 4 — Zeitsteuerung (niedrigste)"
+      icon: mdi:calendar-clock
+      description: >
+        Niedrigste Priorität. Steuert nach einem Schedule-Helfer (on/off).
+      collapsed: true
+      input:
+        time_schedule:
+          name: "🗓️ Zeitplan-Helfer"
+          description: >
+            `optional`
+
+
+            Ein [Schedule-Helfer](https://www.home-assistant.io/integrations/schedule/)
+            der on/off liefert. Bei 'on' → öffnen, bei 'off' → schließen.
+          selector:
+            entity:
+              domain: schedule
+          default: ""
+
+        position_schedule_close:
+          name: "🌙 Position bei Nacht"
+          description: >
+            Position wenn der Zeitplan auf 'off' steht.
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: "%"
+          default: 0
+
+    # ================================================================
+    # SEKTION: Fenster & Ventilation
+    # ================================================================
+    window_section:
+      name: 🪟 Fenster / Ventilation
+      icon: mdi:window-open-variant
+      description: >
+        Erkennt Fensterstatus über Custom-Sensoren (3 Zustände) oder binary_sensor.
+
+
+        **Custom-Sensor** (z.B. `sensor.fensterstatus_xyz`): Meldet Zustände
+        wie `Fenster geschlossen`, `Fenster geöffnet`, `Fenster gekippt`.
+        Der 'geschlossen'-State ist konfigurierbar.
+
+
+        **binary_sensor**: `off` = geschlossen, `on` = offen.
+
+
+        Bei offenem/gekipptem Fenster kann optional eine Ventilationsposition
+        statt komplettem Blockieren gefahren werden.
+      collapsed: true
+      input:
+        window_sensors:
+          name: "🪟 Fenster-/Tür-Sensor(en)"
+          description: >
+            `optional`
+
+
+            Erlaubt `sensor` (Custom 3-State) und `binary_sensor` Entities.
+          selector:
+            entity:
+              domain:
+                - sensor
+                - binary_sensor
+              multiple: true
+          default: []
+
+        window_closed_state:
+          name: "🏷️ State für 'geschlossen'"
+          description: >
+            Der State-Wert der als 'Fenster geschlossen' gilt.
+
+
+            Für **Custom-Sensoren**: z.B. `Fenster geschlossen`
+
+
+            Für **binary_sensor**: `off`
+
+
+            Alles andere wird als 'offen' oder 'gekippt' gewertet und blockiert
+            die Automatisierung (oder aktiviert Ventilationsposition).
+          selector:
+            text: {}
+          default: "Fenster geschlossen"
+
+        enable_ventilation:
+          name: "🌬️ Ventilationsposition aktivieren"
+          description: >
+            Wenn aktiv, wird bei offenem/gekipptem Fenster eine Ventilationsposition
+            gefahren statt die Automatisierung komplett zu blockieren.
+          selector:
+            boolean: {}
+          default: false
+
+        position_ventilation:
+          name: "🌬️ Ventilationsposition"
+          description: >
+            Position bei offenem/gekipptem Fenster (z.B. 30% für Luftzirkulation).
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: "%"
+          default: 30
+
+    # ================================================================
+    # SEKTION: Tilt / Lamellen
+    # ================================================================
+    tilt_section:
+      name: 🔄 Tilt / Lamellen-Steuerung
+      icon: mdi:blinds-horizontal
+      description: >
+        Für Jalousien mit Lamellen-Steuerung. Setzt pro Modus eine Tilt-Position.
+        Leer lassen wenn keine Lamellen vorhanden.
+
+
+        Typische Werte: 0 = Lamellen zu, 50 = waagerecht, 100 = offen.
+      collapsed: true
+      input:
+        tilt_open:
+          name: "🔄 Tilt: Offen"
+          description: >
+            Lamellen-Position im Normalzustand (offen).
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: "%"
+          default: -1
+
+        tilt_heat:
+          name: "🔄 Tilt: Hitzeschutz"
+          description: >
+            Lamellen-Position bei Hitzeschutz (z.B. 50% = waagerecht für Licht ohne direkte Sonne).
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: "%"
+          default: -1
+
+        tilt_lux_close:
+          name: "🔄 Tilt: Dunkelheit (Lux)"
+          description: >
+            Lamellen-Position bei Dunkelheit.
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: "%"
+          default: -1
+
+        tilt_sun_close:
+          name: "🔄 Tilt: Niedrige Sonne"
+          description: >
+            Lamellen-Position bei niedriger Sonnenhöhe.
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: "%"
+          default: -1
+
+        tilt_schedule_close:
+          name: "🔄 Tilt: Nacht (Zeitplan)"
+          description: >
+            Lamellen-Position bei Nacht / Zeitplan off.
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: "%"
+          default: -1
+
+        tilt_ventilation:
+          name: "🔄 Tilt: Ventilation"
+          description: >
+            Lamellen-Position bei offenem/gekipptem Fenster.
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: "%"
+          default: -1
+
+    # ================================================================
+    # SEKTION: Blocker
+    # ================================================================
+    blocker_section:
+      name: 🛑 Blocker & Sperren
+      icon: mdi:block-helper
+      description: >
+        Präsenz-Blocker und manueller Override.
+
+
+        **Override-Modus:**
+
+        `auto` — Das Blueprint erkennt automatisch wenn die Abdeckung
+        manuell (per Taster, App etc.) bewegt wurde. Dazu speichert es die
+        letzte Soll-Position in einem `input_number`-Helfer und vergleicht
+        beim nächsten Durchlauf. Weicht die aktuelle Position ab → Override.
+
+        `datetime` — Klassisch: eine separate Automatisierung setzt einen
+        `input_datetime`-Helfer auf `now()` bei manueller Bedienung.
+
+        `disabled` — Kein Override.
+      collapsed: true
+      input:
+        presence_sensor_block_open:
+          name: "⛔ Blocker: Öffnen verhindern"
+          description: >
+            `optional`
+
+
+            Einer oder mehrere Sensoren. Wenn mindestens einer 'on' ist,
+            wird nicht geöffnet. Z.B. Anwesenheit, Bewegungsmelder etc.
+          selector:
+            entity:
+              domain: binary_sensor
+              multiple: true
+          default: []
+
+        presence_sensor_block_close:
+          name: "⛔ Blocker: Schließen verhindern"
+          description: >
+            `optional`
+
+
+            Einer oder mehrere Sensoren. Wenn mindestens einer 'on' ist,
+            wird nicht geschlossen.
+          selector:
+            entity:
+              domain: binary_sensor
+              multiple: true
+          default: []
+
+        blocker_cooldown_open_min:
+          name: "⏱️ Karenzzeit Öffnen-Blocker (Minuten)"
+          description: >
+            Wartezeit nach Wegfall eines Öffnen-Blockers bevor geöffnet wird.
+
+
+            Z.B. Bewegungsmelder im Schlafzimmer: Person steht auf,
+            Melder geht auf `off` — Rollo wartet noch X Minuten
+            bevor es öffnet (falls Person nochmal zurückkommt).
+
+
+            `0` = keine Karenzzeit, sofort fahren.
+          selector:
+            number:
+              min: 0
+              max: 60
+              unit_of_measurement: "min"
+          default: 0
+
+        blocker_cooldown_close_min:
+          name: "⏱️ Karenzzeit Schließen-Blocker (Minuten)"
+          description: >
+            Wartezeit nach Wegfall eines Schließen-Blockers bevor geschlossen wird.
+
+
+            Z.B. Fenstersensor als Schließ-Blocker: Fenster wird geschlossen,
+            Sensor geht auf `off` — Rollo wartet noch X Minuten
+            bevor es zufährt.
+
+
+            `0` = keine Karenzzeit, sofort fahren.
+          selector:
+            number:
+              min: 0
+              max: 60
+              unit_of_measurement: "min"
+          default: 0
+
+        manual_override_mode:
+          name: "✋ Override-Modus"
+          description: >
+            `auto` = automatische Erkennung (empfohlen, benötigt input_number)
+
+
+            `datetime` = externer Zeitstempel (benötigt input_datetime + separate Automatisierung)
+
+
+            `disabled` = kein Override
+          selector:
+            select:
+              mode: dropdown
+              options:
+                - auto
+                - datetime
+                - disabled
+          default: "disabled"
+
+        manual_override_last_pos:
+          name: "📐 Letzte Soll-Position (input_number)"
+          description: >
+            `optional` — Nur für Modus `auto`.
+
+
+            Erstelle unter **Einstellungen → Helfer → + → Nummer** einen
+            Helfer mit Min=0, Max=100, Schritt=1.
+            Z.B. `input_number.letzte_position_wohnzimmer`.
+
+
+            Das Blueprint speichert hier automatisch die zuletzt gesetzte
+            Soll-Position. Wenn die tatsächliche Cover-Position davon abweicht,
+            wurde manuell gefahren → Override wird aktiv.
+          selector:
+            entity:
+              domain: input_number
+          default: ""
+
+        manual_override_datetime:
+          name: "✋ Override-Zeitstempel (input_datetime)"
+          description: >
+            `optional` — Nur für Modus `datetime`.
+
+
+            Erstelle unter **Einstellungen → Helfer → + → Datum und/oder Zeit**
+            einen Helfer. Eine separate Automatisierung muss diesen auf `now()`
+            setzen wenn die Abdeckung manuell bewegt wird.
+          selector:
+            entity:
+              domain: input_datetime
+          default: ""
+
+        manual_override_duration_min:
+          name: "⏱️ Override-Dauer (Minuten)"
+          description: >
+            Wie lange nach manueller Erkennung die Automatik pausiert.
+            Gilt für beide Modi (`auto` und `datetime`).
+          selector:
+            number:
+              min: 0
+              max: 1440
+              unit_of_measurement: "min"
+          default: 120
+
+# ============================================================
+mode: restart
+max_exceeded: silent
+
+# ============================================================
+# TRIGGER-VARIABLEN (für optionale Entity-Trigger)
+# ============================================================
+trigger_variables:
+  _tv_lux: !input lux_sensor
+  _tv_temp: !input temp_sensor
+  _tv_schedule: !input time_schedule
+  _tv_summer: !input summer_mode_boolean
+  _tv_hysteresis: !input hysteresis_heat_boolean
+  _tv_solar_sensor: !input solar_brightness_sensor
+
+# ============================================================
+# TRIGGER — Template-Trigger für optionale Sensoren, Poll für Sonne
+# ============================================================
+trigger:
+  - platform: homeassistant
+    event: start
+
+  # Poll alle 3 Min für Sonnenstand + Blocker-Änderungen
+  # (Blocker sind Listen und können nicht als Template-Trigger genutzt werden)
+  - platform: time_pattern
+    minutes: "/3"
+
+  # Sun-Entity State-Wechsel (above_horizon ↔ below_horizon)
+  - platform: state
+    entity_id: !input sun_entity
+
+  # Lux-Sensor
+  - platform: template
+    value_template: >-
+      {{ _tv_lux != '' and states(_tv_lux) | float(-999) != -999 }}
+
+  # Temperatur-Sensor
+  - platform: template
+    value_template: >-
+      {{ _tv_temp != '' and states(_tv_temp) | float(-999) != -999 }}
+
+  # Schedule (on/off)
+  - platform: template
+    value_template: >-
+      {{ _tv_schedule != '' and is_state(_tv_schedule, 'on') }}
+  - platform: template
+    value_template: >-
+      {{ _tv_schedule != '' and is_state(_tv_schedule, 'off') }}
+
+  # Sommermodus
+  - platform: template
+    value_template: >-
+      {{ _tv_summer != '' and is_state(_tv_summer, 'on') }}
+  - platform: template
+    value_template: >-
+      {{ _tv_summer != '' and is_state(_tv_summer, 'off') }}
+
+  # Hysterese-Helfer
+  - platform: template
+    value_template: >-
+      {{ _tv_hysteresis != '' and is_state(_tv_hysteresis, 'on') }}
+  - platform: template
+    value_template: >-
+      {{ _tv_hysteresis != '' and is_state(_tv_hysteresis, 'off') }}
+
+  # Solar-Helligkeitssensor
+  - platform: template
+    value_template: >-
+      {{ _tv_solar_sensor != '' and states(_tv_solar_sensor) | float(-999) != -999 }}
+
+# ============================================================
+# AKTION
+# ============================================================
+action:
+  # ── 0. Nach HA-Start kurz warten bis alle Entities geladen ──
+  - if:
+      - condition: template
+        value_template: "{{ trigger.platform == 'homeassistant' }}"
+    then:
+      - delay:
+          seconds: 30
+
+  # ── 0b. Cover-Verfügbarkeit prüfen ──
+  - variables:
+      cover_list: !input target_covers
+
+  - condition: template
+    value_template: >-
+      {{ cover_list | length > 0 }}
+
+  # ── 1. Alle Variablen sammeln ──
+  - variables:
+      debug: !input enable_debug_log
+      debug_prefix: "[Abdeckung V22]"
+
+      # Entities
+      covers: !input target_covers
+      lux_entity: !input lux_sensor
+      temp_entity: !input temp_sensor
+      summer_entity: !input summer_mode_boolean
+      hysteresis_entity: !input hysteresis_heat_boolean
+      schedule_entity: !input time_schedule
+      cloud_entity: !input cloud_coverage_sensor
+      override_entity: !input manual_override_datetime
+      override_mode: !input manual_override_mode
+      last_pos_entity: !input manual_override_last_pos
+      window_list: !input window_sensors
+      window_closed_val: !input window_closed_state
+      use_ventilation: !input enable_ventilation
+      pos_ventilation: !input position_ventilation
+      sun_ent: !input sun_entity
+      sun_mode: !input sun_mode
+      sun_az_start: !input sun_azimuth_start
+      sun_az_end: !input sun_azimuth_end
+      sunrise_offset: !input sunrise_offset_min
+      sunset_offset: !input sunset_offset_min
+      solar_mode: !input solar_mode
+      pos_solar: !input position_solar
+      solar_brightness_entity: !input solar_brightness_sensor
+      solar_bright_thresh: !input solar_brightness_threshold
+      solar_time_start: !input solar_time_start
+      solar_time_end: !input solar_time_end
+
+      # Positionen
+      pos_open: !input position_open
+      pos_heat: !input position_heat_close
+      pos_lux_close: !input position_lux_close
+      pos_sun_close: !input position_sun_close
+      pos_time_close: !input position_schedule_close
+      tolerance: !input position_tolerance
+
+      # Tilt (-1 = deaktiviert)
+      t_open: !input tilt_open
+      t_heat: !input tilt_heat
+      t_lux_close: !input tilt_lux_close
+      t_sun_close: !input tilt_sun_close
+      t_schedule_close: !input tilt_schedule_close
+      t_ventilation: !input tilt_ventilation
+      has_tilt: >-
+        {{ [t_open, t_heat, t_lux_close, t_sun_close,
+            t_schedule_close, t_ventilation]
+           | select('ge', 0) | list | count > 0 }}
+
+      # Schwellwerte
+      lux_open_on: !input lux_threshold_open_activate
+      lux_open_hold: !input lux_threshold_open_deactivate
+      lux_close_on: !input lux_threshold_close_activate
+      lux_close_hold: !input lux_threshold_close_deactivate
+      temp_high: !input temp_threshold_heat_activate
+      temp_low: !input temp_threshold_heat_deactivate
+      clouds_max: !input cloud_coverage_max_heat
+      heat_lux_min: !input heat_lux_min
+      az_start: !input azimuth_start
+      az_end: !input azimuth_end
+      sun_open_thresh: !input elevation_open_threshold
+      sun_close_thresh: !input elevation_close_threshold
+      override_dur_min: !input manual_override_duration_min
+      blocker_cooldown_open: !input blocker_cooldown_open_min
+      blocker_cooldown_close: !input blocker_cooldown_close_min
+
+      start_time: !input temp_mode_time_start
+      end_time: !input temp_mode_time_end
+
+      # ── Berechnete Werte ──
+
+      # Erstes Cover als Referenz für current_position
+      primary_cover: "{{ covers[0] }}"
+      current_pos: >-
+        {{ state_attr(primary_cover, 'current_position') | int(-1) }}
+      current_tilt: >-
+        {{ state_attr(primary_cover, 'current_tilt_position') | int(-1) }}
+
+      # Sensor-Werte (Bug-Fix: prüfe auf unavailable/unknown)
+      temp: >-
+        {% if temp_entity != '' %}
+          {% set v = states(temp_entity) %}
+          {{ v | float(-100) if v not in ['unavailable', 'unknown'] else -100 }}
+        {% else %}
+          {{ -100 }}
+        {% endif %}
+
+      lux: >-
+        {% if lux_entity != '' %}
+          {% set v = states(lux_entity) %}
+          {{ v | float(-1) if v not in ['unavailable', 'unknown'] else -1 }}
+        {% else %}
+          {{ -1 }}
+        {% endif %}
+
+      elevation: >-
+        {{ state_attr(sun_ent, 'elevation') | float(0) }}
+
+      azimuth: >-
+        {{ state_attr(sun_ent, 'azimuth') | float(0) }}
+
+      # Sonnenaufgang/-untergang mit Offset
+      # next_rising/next_setting sind UTC-Zeitpunkte für den nächsten Wechsel.
+      # Logik: Wenn next_setting in der Zukunft liegt UND next_rising AUCH in
+      # der Zukunft liegt → es ist noch dunkel (vor Aufgang).
+      # Wenn next_setting in der Zukunft liegt UND next_rising in der
+      # Vergangenheit oder == now → Sonne ist aufgegangen.
+      # Mit Offset verschieben wir die effektiven Zeitpunkte.
+
+      next_rising_ts: >-
+        {{ state_attr(sun_ent, 'next_rising') | as_datetime | default(none) }}
+
+      next_setting_ts: >-
+        {{ state_attr(sun_ent, 'next_setting') | as_datetime | default(none) }}
+
+      # Effektiver Sonnenstatus MIT Offset:
+      # after_sunrise = jetzt >= (letzter Aufgang + offset)
+      # before_sunset = jetzt < (nächster Untergang + offset)
+      # Trick: Wenn next_rising in der Zukunft → letzter Aufgang war gestern,
+      #         also Sonne ist noch nicht auf. Wenn next_setting in der Zukunft
+      #         und next_rising auch → vor Aufgang.
+      sun_is_up_with_offset: >-
+        {% if sun_mode != 'sunrise_sunset' %}
+          {{ is_state(sun_ent, 'above_horizon') }}
+        {% elif next_rising_ts is none or next_setting_ts is none %}
+          {{ is_state(sun_ent, 'above_horizon') }}
+        {% else %}
+          {% set rise_offset = timedelta(minutes=sunrise_offset | int(0)) %}
+          {% set set_offset = timedelta(minutes=sunset_offset | int(0)) %}
+          {% set sun_up_raw = is_state(sun_ent, 'above_horizon') %}
+          {% if sun_up_raw %}
+            {% set effective_set = next_setting_ts + set_offset %}
+            {{ now() < effective_set }}
+          {% else %}
+            {% set effective_rise = next_rising_ts + rise_offset %}
+            {{ now() >= effective_rise }}
+          {% endif %}
+        {% endif %}
+
+      # Soll die Sonnenstand-Prio schließen?
+      sun_wants_close: "{% set s = sun_az_start | float(0) %}{% set e = sun_az_end | float(0) %}{% set a = azimuth | float(0) %}{% if s == 0 and e == 360 %}{% set in_range = true %}{% elif s > e %}{% set in_range = (a >= s or a <= e) %}{% else %}{% set in_range = (a >= s and a <= e) %}{% endif %}{% set elev = elevation | float(0) %}{% set close_th = sun_close_thresh | float(0) %}{% if sun_mode == 'sunrise_sunset' %}{% set sun_up = (sun_is_up_with_offset | string | lower) == 'true' %}{{ (not sun_up) and in_range }}{% elif sun_mode == 'elevation' %}{{ (elev < close_th) and in_range }}{% else %}{{ false }}{% endif %}"
+
+      # Soll die Sonnenstand-Prio öffnen?
+      sun_wants_open: "{% set s = sun_az_start | float(0) %}{% set e = sun_az_end | float(0) %}{% set a = azimuth | float(0) %}{% if s == 0 and e == 360 %}{% set in_range = true %}{% elif s > e %}{% set in_range = (a >= s or a <= e) %}{% else %}{% set in_range = (a >= s and a <= e) %}{% endif %}{% set elev = elevation | float(0) %}{% set open_th = sun_open_thresh | float(0) %}{% if sun_mode == 'sunrise_sunset' %}{% set sun_up = (sun_is_up_with_offset | string | lower) == 'true' %}{{ sun_up and in_range }}{% elif sun_mode == 'elevation' %}{{ (elev > open_th) and in_range }}{% else %}{{ false }}{% endif %}"
+
+      # Solar-Ladezeit
+      has_solar: "{{ solar_mode != 'disabled' }}"
+      solar_in_time: "{% set s = today_at(solar_time_start) %}{% set e = today_at(solar_time_end) %}{{ s <= now() <= e }}"
+      solar_brightness_val: "{% if solar_brightness_entity != '' %}{% set v = states(solar_brightness_entity) %}{{ v | float(-1) if v not in ['unavailable', 'unknown'] else -1 }}{% else %}{{ lux | float(-1) }}{% endif %}"
+      solar_bright_ok: "{% set v = solar_brightness_val | float(-1) %}{% set th = solar_bright_thresh | float(500) %}{{ v >= 0 and v >= th }}"
+      solar_active: "{% set mode = solar_mode %}{% set t = (solar_in_time | string | lower) == 'true' %}{% set b = (solar_bright_ok | string | lower) == 'true' %}{% if mode == 'time' %}{{ t }}{% elif mode == 'brightness' %}{{ b }}{% elif mode == 'time_and_brightness' %}{{ t and b }}{% elif mode == 'time_or_brightness' %}{{ t or b }}{% else %}{{ false }}{% endif %}"
+
+      clouds: >-
+        {% if cloud_entity != '' %}
+          {% set v = states(cloud_entity) %}
+          {{ v | float(0) if v not in ['unavailable', 'unknown'] else 0 }}
+        {% else %}
+          {{ 0 }}
+        {% endif %}
+
+      summer_on: >-
+        {{ is_state(summer_entity, 'on') if summer_entity != '' else false }}
+
+      # Feature-Flags (Bug-Fix: Hitzeschutz braucht ALLE drei Entities)
+      has_hysteresis: >-
+        {{ hysteresis_entity != '' and temp_entity != '' and summer_entity != '' }}
+
+      has_schedule: >-
+        {{ schedule_entity != '' }}
+
+      # Bug-Fix: Lux nur aktiv wenn Sensor da UND gültiger Wert
+      has_lux: >-
+        {{ lux_entity != '' and lux | float(-1) >= 0 }}
+
+      # Sun-Prio aktiv wenn Modus nicht disabled
+      has_sun: >-
+        {{ sun_mode != 'disabled' }}
+
+      # Azimut-Range für Sonnenstand-Prio
+      sun_in_az_range: "{% set s = sun_az_start | float(0) %}{% set e = sun_az_end | float(0) %}{% set a = azimuth | float(0) %}{% if s == 0 and e == 360 %}{{ true }}{% elif s > e %}{{ a >= s or a <= e }}{% else %}{{ a >= s and a <= e }}{% endif %}"
+
+      # Zeitfenster
+      within_time: >-
+        {{ today_at(start_time) <= now() <= today_at(end_time) }}
+
+      # Azimut-Range (Wrap-Around)
+      in_az_range: "{% set s = az_start | float(0) %}{% set e = az_end | float(0) %}{% set a = azimuth | float(0) %}{% if s > e %}{{ a >= s or a <= e }}{% else %}{{ a >= s and a <= e }}{% endif %}"
+
+      clouds_ok: "{% set c = clouds | float(0) %}{% set m = clouds_max | float(80) %}{{ c <= m }}"
+
+      heat_conditions_met: "{% set so = (summer_on | string | lower) == 'true' %}{% set wt = (within_time | string | lower) == 'true' %}{% set ir = (in_az_range | string | lower) == 'true' %}{% set co = (clouds_ok | string | lower) == 'true' %}{% set tv = temp | float(-100) > -100 %}{% set lmin = heat_lux_min | float(0) %}{% set lx = lux | float(-1) %}{% set lux_ok = (lmin <= 0) or (lx >= lmin) %}{{ so and wt and ir and co and tv and lux_ok }}"
+
+      # Manueller Override (zwei Modi)
+      manual_override_dur_sec: >-
+        {{ (override_dur_min | int(0)) * 60 }}
+
+      # Modus "datetime": klassisch per input_datetime
+      manual_override_ts: >-
+        {% if override_mode == 'datetime' and override_entity != '' %}
+          {% set v = states(override_entity) %}
+          {% if v not in ['unavailable', 'unknown', ''] %}
+            {{ v | as_datetime | default(none) }}
+          {% else %}
+            {{ none }}
+          {% endif %}
+        {% else %}
+          {{ none }}
+        {% endif %}
+
+      datetime_block: >-
+        {{ manual_override_ts is not none
+           and manual_override_ts is not string
+           and (now() - manual_override_ts).total_seconds() < manual_override_dur_sec | int }}
+
+      # Modus "auto": vergleicht aktuelle Position mit zuletzt gesetzter Soll-Position
+      # Wenn Abweichung > Toleranz → jemand hat manuell gefahren
+      last_known_pos: >-
+        {% if override_mode == 'auto' and last_pos_entity != '' %}
+          {% set v = states(last_pos_entity) %}
+          {{ v | int(-1) if v not in ['unavailable', 'unknown'] else -1 }}
+        {% else %}
+          {{ -1 }}
+        {% endif %}
+
+      auto_block: >-
+        {% if override_mode == 'auto' and last_pos_entity != '' and last_known_pos | int >= 0 %}
+          {% set pos_diff = (current_pos | int - last_known_pos | int) | abs > tolerance | int %}
+          {% if pos_diff and manual_override_dur_sec | int > 0 %}
+            {% set last_set = states[last_pos_entity].last_changed
+                              if last_pos_entity in states else none %}
+            {% set expired = last_set is none or
+               (now() - last_set).total_seconds() > manual_override_dur_sec | int %}
+            {{ not expired }}
+          {% else %}
+            {{ pos_diff }}
+          {% endif %}
+        {% else %}
+          {{ false }}
+        {% endif %}
+
+      # Kombiniert: einer der beiden Modi blockiert
+      is_manual_block: >-
+        {% if override_mode == 'datetime' %}
+          {{ datetime_block }}
+        {% elif override_mode == 'auto' %}
+          {{ auto_block }}
+        {% else %}
+          {{ false }}
+        {% endif %}
+
+      # Fenster: prüft custom sensor UND binary_sensor
+      # Custom-Sensor: vergleicht gegen konfigurierten closed-State
+      # binary_sensor: 'off' = geschlossen (wenn closed_val == 'off' oder
+      #   closed_val custom → binary_sensor 'off' wird extra geprüft)
+      window_not_closed_list: >-
+        {% if window_list | length > 0 %}
+          {% set ns = namespace(open=[]) %}
+          {% for entity in expand(window_list) %}
+            {% if entity.state not in ['unavailable', 'unknown'] %}
+              {% if entity.domain == 'binary_sensor' %}
+                {% if entity.state != 'off' %}
+                  {% set ns.open = ns.open + [entity.entity_id] %}
+                {% endif %}
+              {% else %}
+                {% if entity.state != window_closed_val %}
+                  {% set ns.open = ns.open + [entity.entity_id] %}
+                {% endif %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.open }}
+        {% else %}
+          {{ [] }}
+        {% endif %}
+
+      window_open: >-
+        {{ window_not_closed_list | length > 0 }}
+
+      # Blocker (Listen + separate Karenzzeiten)
+      block_open_list: !input presence_sensor_block_open
+      block_close_list: !input presence_sensor_block_close
+      blocker_cd_open_sec: "{{ (blocker_cooldown_open | int(0)) * 60 }}"
+      blocker_cd_close_sec: "{{ (blocker_cooldown_close | int(0)) * 60 }}"
+
+      block_open_active: >-
+        {% if block_open_list | length == 0 %}
+          {{ false }}
+        {% else %}
+          {% set cd = blocker_cd_open_sec | int(0) %}
+          {% set sensors = expand(block_open_list) %}
+          {% set any_on = sensors | selectattr('state', 'eq', 'on') | list | count > 0 %}
+          {% if any_on %}
+            {{ true }}
+          {% elif cd > 0 %}
+            {% set recently_off = sensors
+               | selectattr('state', 'eq', 'off')
+               | selectattr('last_changed', 'defined')
+               | list %}
+            {% set in_cooldown = recently_off
+               | map(attribute='last_changed')
+               | select('gt', now() - timedelta(seconds=cd))
+               | list | count > 0 %}
+            {{ in_cooldown }}
+          {% else %}
+            {{ false }}
+          {% endif %}
+        {% endif %}
+
+      block_close_active: >-
+        {% if block_close_list | length == 0 %}
+          {{ false }}
+        {% else %}
+          {% set cd = blocker_cd_close_sec | int(0) %}
+          {% set sensors = expand(block_close_list) %}
+          {% set any_on = sensors | selectattr('state', 'eq', 'on') | list | count > 0 %}
+          {% if any_on %}
+            {{ true }}
+          {% elif cd > 0 %}
+            {% set recently_off = sensors
+               | selectattr('state', 'eq', 'off')
+               | selectattr('last_changed', 'defined')
+               | list %}
+            {% set in_cooldown = recently_off
+               | map(attribute='last_changed')
+               | select('gt', now() - timedelta(seconds=cd))
+               | list | count > 0 %}
+            {{ in_cooldown }}
+          {% else %}
+            {{ false }}
+          {% endif %}
+        {% endif %}
+
+  # ── 2. Debug-Log ──
+  - if:
+      - condition: template
+        value_template: "{{ debug }}"
+    then:
+      - service: system_log.write
+        data:
+          level: info
+          message: >-
+            {{ debug_prefix }}
+            Covers={{ covers }}, PrimaryPos={{ current_pos }},
+            Temp={{ temp }}°C, Lux={{ lux }},
+            Elev={{ elevation }}, Az={{ azimuth }},
+            SunMode={{ sun_mode }}, SunUp={{ sun_is_up_with_offset }},
+            RiseOffset={{ sunrise_offset }}min, SetOffset={{ sunset_offset }}min,
+            HeatOK={{ heat_conditions_met }},
+            SolarActive={{ solar_active }} (mode={{ solar_mode }}),
+            ManualBlock={{ is_manual_block }} (mode={{ override_mode }}),
+            WindowOpen={{ window_open }} ({{ window_not_closed_list }}),
+            Ventilation={{ use_ventilation }},
+            BlockOpen={{ block_open_active }} (cd={{ blocker_cooldown_open }}min),
+            BlockClose={{ block_close_active }} (cd={{ blocker_cooldown_close }}min)
+
+  # ── 3. Fenster-Ventilation (VOR globalen Blockern) ──
+  # Bei offenem Fenster + Ventilation → Position setzen und stoppen
+  - if:
+      - condition: template
+        value_template: "{{ window_open | string | lower == 'true' and use_ventilation and is_manual_block | string | lower != 'true' }}"
+    then:
+      - if:
+          - condition: template
+            value_template: >-
+              {{ (pos_ventilation | int - current_pos | int) | abs > tolerance | int }}
+        then:
+          - service: cover.set_cover_position
+            target:
+              entity_id: "{{ covers }}"
+            data:
+              position: "{{ pos_ventilation | int }}"
+          # Auto-Override: Soll-Position speichern
+          - if:
+              - condition: template
+                value_template: "{{ override_mode == 'auto' and last_pos_entity != '' }}"
+            then:
+              - service: input_number.set_value
+                target:
+                  entity_id: "{{ last_pos_entity }}"
+                data:
+                  value: "{{ pos_ventilation | int }}"
+          - if:
+              - condition: template
+                value_template: "{{ has_tilt and t_ventilation | int >= 0 }}"
+            then:
+              - service: cover.set_cover_tilt_position
+                target:
+                  entity_id: "{{ covers }}"
+                data:
+                  tilt_position: "{{ t_ventilation | int }}"
+          - if:
+              - condition: template
+                value_template: "{{ debug }}"
+            then:
+              - service: system_log.write
+                data:
+                  level: info
+                  message: >-
+                    {{ debug_prefix }} → Ventilation:
+                    Position {{ current_pos }} → {{ pos_ventilation }}
+      - stop: "Ventilationsposition gesetzt"
+
+  # ── 4. Globale Blocker (Fenster ohne Ventilation = komplett blockieren) ──
+  - condition: template
+    value_template: "{{ is_manual_block | string | lower != 'true' and window_open | string | lower != 'true' }}"
+
+  # ── 5. Hysterese aktualisieren (Hitzeschutz) ──
+  - if:
+      - condition: template
+        value_template: "{{ has_hysteresis | string | lower == 'true' }}"
+    then:
+      - if:
+          - condition: template
+            value_template: "{{ heat_conditions_met | string | lower == 'true' }}"
+        then:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ temp | float > temp_high | float }}"
+                sequence:
+                  - service: input_boolean.turn_on
+                    target:
+                      entity_id: "{{ hysteresis_entity }}"
+              - conditions:
+                  - condition: template
+                    value_template: "{{ temp | float < temp_low | float }}"
+                sequence:
+                  - service: input_boolean.turn_off
+                    target:
+                      entity_id: "{{ hysteresis_entity }}"
+        else:
+          - service: input_boolean.turn_off
+            target:
+              entity_id: "{{ hysteresis_entity }}"
+
+  # ── 6. Zielposition + Tilt berechnen (Prioritätskette) ──
+  - variables:
+      # Hilfsvariablen: String→Bool Konvertierung
+      _has_hyst: "{{ has_hysteresis | string | lower == 'true' }}"
+      _has_solar: "{{ has_solar | string | lower == 'true' }}"
+      _solar_active: "{{ solar_active | string | lower == 'true' }}"
+      _has_sun: "{{ has_sun | string | lower == 'true' }}"
+      _has_lux: "{{ has_lux | string | lower == 'true' }}"
+      _has_sched: "{{ has_schedule | string | lower == 'true' }}"
+      _sun_close: "{{ sun_wants_close | string | lower == 'true' }}"
+      _sun_open: "{{ sun_wants_open | string | lower == 'true' }}"
+      _blk_open: "{{ block_open_active | string | lower == 'true' }}"
+      _blk_close: "{{ block_close_active | string | lower == 'true' }}"
+      _in_time: "{{ within_time | string | lower == 'true' }}"
+
+      target_position: >-
+        {% if _has_hyst and is_state(hysteresis_entity, 'on') and _in_time %}
+          {% if not _blk_close %}
+            {{ pos_heat | int }}
+          {% else %}
+            {{ current_pos }}
+          {% endif %}
+        {% elif _has_solar and _solar_active %}
+          {{ pos_solar | int }}
+        {% elif _has_sun %}
+          {% if _sun_close %}
+            {% if not _blk_close %}
+              {{ pos_sun_close | int }}
+            {% else %}
+              {{ current_pos }}
+            {% endif %}
+          {% elif _sun_open %}
+            {% if not _blk_open %}
+              {{ pos_open | int }}
+            {% else %}
+              {{ current_pos }}
+            {% endif %}
+          {% else %}
+            {{ current_pos }}
+          {% endif %}
+        {% elif _has_lux %}
+          {% if lux | float < lux_close_on | float %}
+            {% if not _blk_close %}
+              {{ pos_lux_close | int }}
+            {% else %}
+              {{ current_pos }}
+            {% endif %}
+          {% elif lux | float > lux_open_on | float %}
+            {% if not _blk_open %}
+              {{ pos_open | int }}
+            {% else %}
+              {{ current_pos }}
+            {% endif %}
+          {% elif lux | float < lux_close_hold | float and current_pos < 50 %}
+            {{ current_pos }}
+          {% elif lux | float > lux_open_hold | float and current_pos > 50 %}
+            {{ current_pos }}
+          {% else %}
+            {{ current_pos }}
+          {% endif %}
+        {% elif _has_sched %}
+          {% if is_state(schedule_entity, 'off') %}
+            {% if not _blk_close %}
+              {{ pos_time_close | int }}
+            {% else %}
+              {{ current_pos }}
+            {% endif %}
+          {% elif is_state(schedule_entity, 'on') %}
+            {% if not _blk_open %}
+              {{ pos_open | int }}
+            {% else %}
+              {{ current_pos }}
+            {% endif %}
+          {% else %}
+            {{ current_pos }}
+          {% endif %}
+        {% else %}
+          {{ current_pos }}
+        {% endif %}
+
+      target_tilt: >-
+        {% if not has_tilt %}
+          {{ -1 }}
+        {% elif _has_hyst and is_state(hysteresis_entity, 'on') and _in_time %}
+          {{ t_heat | int }}
+        {% elif _has_solar and _solar_active %}
+          {{ t_open | int }}
+        {% elif _has_sun and _sun_close %}
+          {{ t_sun_close | int }}
+        {% elif _has_sun and _sun_open %}
+          {{ t_open | int }}
+        {% elif _has_lux and lux | float < lux_close_on | float %}
+          {{ t_lux_close | int }}
+        {% elif _has_lux and lux | float > lux_open_on | float %}
+          {{ t_open | int }}
+        {% elif _has_sched and is_state(schedule_entity, 'off') %}
+          {{ t_schedule_close | int }}
+        {% elif _has_sched and is_state(schedule_entity, 'on') %}
+          {{ t_open | int }}
+        {% else %}
+          {{ t_open | int }}
+        {% endif %}
+
+      target_prio: >-
+        {% if _has_hyst and is_state(hysteresis_entity, 'on') and _in_time %}Hitzeschutz
+        {% elif _has_solar and _solar_active %}Solar
+        {% elif _has_sun %}Sonnenstand
+        {% elif _has_lux %}Lux
+        {% elif _has_sched %}Zeitplan
+        {% else %}Keine{% endif %}
+
+  # ── 7. Position setzen (mit Toleranzband) ──
+  - variables:
+      pos_changed: >-
+        {{ (target_position | int - current_pos | int) | abs > tolerance | int
+           and target_position | int >= 0 }}
+      tilt_changed: >-
+        {{ target_tilt | int >= 0
+           and (target_tilt | int - current_tilt | int) | abs > 0 }}
+      anything_changed: >-
+        {{ pos_changed or tilt_changed }}
+
+  - if:
+      - condition: template
+        value_template: "{{ anything_changed }}"
+    then:
+      # Position setzen
+      - if:
+          - condition: template
+            value_template: "{{ pos_changed }}"
+        then:
+          - service: cover.set_cover_position
+            target:
+              entity_id: "{{ covers }}"
+            data:
+              position: "{{ target_position | int }}"
+          # Auto-Override: Soll-Position speichern
+          - if:
+              - condition: template
+                value_template: "{{ override_mode == 'auto' and last_pos_entity != '' }}"
+            then:
+              - service: input_number.set_value
+                target:
+                  entity_id: "{{ last_pos_entity }}"
+                data:
+                  value: "{{ target_position | int }}"
+
+      # Tilt setzen
+      - if:
+          - condition: template
+            value_template: "{{ tilt_changed | string | lower == 'true' }}"
+        then:
+          - service: cover.set_cover_tilt_position
+            target:
+              entity_id: "{{ covers }}"
+            data:
+              tilt_position: "{{ target_tilt | int }}"
+
+      - if:
+          - condition: template
+            value_template: "{{ debug }}"
+        then:
+          - service: system_log.write
+            data:
+              level: info
+              message: >-
+                {{ debug_prefix }} → {{ target_prio }}:
+                Pos {{ current_pos }}→{{ target_position }},
+                Tilt {{ current_tilt }}→{{ target_tilt }}
+    else:
+      - if:
+          - condition: template
+            value_template: "{{ debug }}"
+        then:
+          - service: system_log.write
+            data:
+              level: info
+              message: >-
+                {{ debug_prefix }} Keine Änderung
+                ({{ target_prio }}, Pos={{ current_pos }},
+                Tilt={{ current_tilt }}, Tol={{ tolerance }})
