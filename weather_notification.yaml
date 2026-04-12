@@ -1,6 +1,7 @@
 blueprint:
   name: Wettervorhersage-Benachrichtigung
-  description: Senden Sie eine anpassbare Benachrichtigung über die Wettervorhersage für heute und morgen.
+  description: Senden Sie eine anpassbare Benachrichtigung über die Wettervorhersage
+    für heute und morgen.
   domain: automation
   input:
     weather_entity:
@@ -9,157 +10,307 @@ blueprint:
       selector:
         entity:
           filter:
-            - domain: weather
-            
+            - domain:
+                - weather
+          multiple: false
     alternative_weather_entity:
       name: Alternative Wetter-Entität
       description: Alternative Wetter-Entität für Windrichtung.
       selector:
         entity:
           filter:
-            - domain: weather
-            
+            - domain:
+                - weather
+          multiple: false
     notify_device:
       name: Gerät für Benachrichtigung
-      description: Gerät muss die offizielle Home Assistant Companion App ausführen, um Benachrichtigungen zu erhalten.
+      description: Gerät muss die offizielle Home Assistant Companion App ausführen.
       selector:
         device:
           multiple: true
           integration: mobile_app
-          
     time:
       name: Zeittrigger
-      description: Die Zeit, zu der die Automatisierung ausgelöst und die Benachrichtigung gesendet wird.
+      description: Die Zeit, zu der die Benachrichtigung gesendet wird.
       selector:
-        time:
-
+        time: {}
     notification_title:
       name: Titel der Benachrichtigung (optional)
-      description: Der Titel der Benachrichtigung.
-      default: "Wettervorhersage"
-
+      default: Wettervorhersage
     notify_message:
-      name: Benachrichtigung für das heutige Wetter
-      description: >-
-        Ein Beispiel, wie das Wetter angezeigt wird. Die in Ihrer Wetterintegration konfigurierten Einheiten werden verwendet.
-        
-        Zustand: Starker Regen  
-        Temp: 8.4 // 4.0 °C  
-        Niederschlag: 8.6 mm  
-        Windgeschwindigkeit: 24.1 km/h // Windrichtung: 273
-      default: condition
+      name: Felder für das heutige Wetter
+      description: 'Zustand: Starker Regen   Temp: 8.4 // 4.0 °C   Niederschlag: 8.6 mm   Wind: 24.1 km/h // 273°'
+      default:
+        - condition
       selector:
         select:
           mode: list
           multiple: true
           options:
             - label: Wetterzustand
-              value: "condition"
+              value: condition
             - label: Temperatur
-              value: "temperature"
+              value: temperature
             - label: Niederschlag
-              value: "precipitation"
+              value: precipitation
             - label: Wind
-              value: "wind"
- 
+              value: wind
+          custom_value: false
+          sort: false
     tomorrow_message:
       name: Benachrichtigung für das morgige Wetter
-      description: >-
-        Ein Beispiel, wie das Wetter angezeigt wird. Die in Ihrer Wetterintegration konfigurierten Einheiten werden verwendet.
-        
-        Morgen: Regen, Temp: 13.2 // 11.7 °C, Niederschlag: 2.5 mm
       default: tomorrow
       selector:
         select:
           mode: dropdown
+          multiple: false
           options:
             - label: Ja - Informationen für das morgige Wetter senden
-              value: "tomorrow"
+              value: tomorrow
             - label: Nein - Keine Informationen für das morgige Wetter senden
-              value: "noTomorrow"
-              
-variables:
-  notify_device: !input notify_device
-  weather_entity: !input weather_entity
-  alternative_weather_entity: !input alternative_weather_entity
-  notification_title: !input notification_title
-  time: !input time
-  device_id: !input notify_device
-  notify_message: !input notify_message
-  tomorrow_message: !input tomorrow_message
+              value: noTomorrow
+          custom_value: false
+          sort: false
+    presence_sensors:
+      name: Anwesenheitssensoren (optional)
+      description: >
+        Ein binary_sensor oder person-Entität pro Gerät in der gleichen Reihenfolge
+        wie die Geräteliste. Bei person-Entitäten wird zusätzlich geprüft ob einer
+        der verknüpften device_tracker home ist, sowie ob die Person in den letzten
+        2 Stunden home war (Fallback für Tiefschlaf).
+        Leer lassen um immer zu senden.
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain:
+                - binary_sensor
+                - person
+          multiple: true
+    wifi_sensors:
+      name: WLAN-Sensoren (optional)
+      description: >
+        Ein binary_sensor pro Gerät in der gleichen Reihenfolge wie die Geräteliste.
+        Wird mit dem Anwesenheitssensor per OR verknüpft – es reicht wenn einer
+        der beiden zutrifft. Leer lassen um nur Anwesenheit zu prüfen.
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain:
+                - binary_sensor
+          multiple: true
+    ai_summary:
+      name: KI-Zusammenfassung (optional)
+      description: Sendet eine separate KI-generierte Wetterübersicht als zweite
+        Benachrichtigung inkl. Wettertrend der naechsten Tage. Benoetigt eine
+        konfigurierte AI Task Entitaet (HA 2025.7+).
+      default: noAI
+      selector:
+        select:
+          mode: dropdown
+          multiple: false
+          options:
+            - label: Ja - KI-Zusammenfassung als separate Benachrichtigung senden
+              value: ai
+            - label: Nein - Keine KI-Zusammenfassung
+              value: noAI
+          custom_value: false
+          sort: false
+    ai_task_entity:
+      name: AI Task Entität
+      description: Leer lassen für die Standard-AI-Task-Entität. Nur relevant wenn
+        KI-Zusammenfassung aktiviert ist.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain:
+                - ai_task
+          multiple: false
 
-trigger:
-  platform: time
-  at: !input time
+  source_url: https://github.com/fir3drag0n/BP_ha/blob/main/weather_notification.yaml
 
-action:
-  - service: weather.get_forecasts
+triggers:
+  - trigger: time
+    at: !input time
+
+actions:
+  - action: weather.get_forecasts
     data:
       type: daily
     target:
       entity_id: !input weather_entity
     response_variable: daily
-    
+
   - variables:
       weather_entity: !input weather_entity
+      alternative_weather_entity: !input alternative_weather_entity
+      notify_message: !input notify_message
+      tomorrow_message: !input tomorrow_message
+      notification_title: !input notification_title
+      ai_summary: !input ai_summary
+      ai_task_entity: !input ai_task_entity
+      presence_sensors: !input presence_sensors
+      wifi_sensors: !input wifi_sensors
       forecast: "{{ daily[weather_entity].forecast }}"
-      icon: >- 
-        {% set cond_now = forecast[0].condition %}
-        {% if cond_now == 'cloudy' %}mdi:clouds
-        {% elif cond_now == 'fog' %}mdi:weather-fog
-        {% elif cond_now == 'hail' %}mdi:weather-hail
-        {% elif cond_now == 'lightning' %}mdi:weather-lightning
-        {% elif cond_now == 'lightning-rainy' %}mdi:weather-lightning-rainy
-        {% elif cond_now == 'partlycloudy' %}mdi:weather-partly-cloudy
-        {% elif cond_now == 'pouring' %}mdi:weather-pouring
-        {% elif cond_now == 'rainy' %}mdi:weather-rainy
-        {% elif cond_now == 'snowy' %}mdi:weather-snowy
-        {% elif cond_now == 'snowy-rainy' %}mdi:weather-snowy-rainy
-        {% elif cond_now == 'sunny' %}mdi:weather-sunny
-        {% elif cond_now == 'windy' %}mdi:weather-windy
-        {% elif cond_now == 'windy-variant' %}mdi:weather-windy-variant
-        {% elif cond_now == 'exceptional' %}mdi:cloud-alert
+      has_tomorrow: "{{ daily[weather_entity].forecast | length > 1 }}"
+      translations:
+        cloudy: Bewoelkt
+        fog: Nebel
+        hail: Hagel
+        lightning: Blitze
+        lightning-rainy: Gewitterregen
+        partlycloudy: Teilweise bewoelkt
+        pouring: Starker Regen
+        rainy: Regnerisch
+        snowy: Schneefall
+        snowy-rainy: Schneeregen
+        sunny: Sonnig
+        windy: Windig
+        windy-variant: Windig
+        exceptional: Aussergewoehnlich
+      icon: >-
+        {% set c = daily[weather_entity].forecast[0].condition %}
+        {% if c == 'cloudy' %}mdi:clouds
+        {% elif c == 'fog' %}mdi:weather-fog
+        {% elif c == 'hail' %}mdi:weather-hail
+        {% elif c == 'lightning' %}mdi:weather-lightning
+        {% elif c == 'lightning-rainy' %}mdi:weather-lightning-rainy
+        {% elif c == 'partlycloudy' %}mdi:weather-partly-cloudy
+        {% elif c == 'pouring' %}mdi:weather-pouring
+        {% elif c == 'rainy' %}mdi:weather-rainy
+        {% elif c == 'snowy' %}mdi:weather-snowy
+        {% elif c == 'snowy-rainy' %}mdi:weather-snowy-rainy
+        {% elif c == 'sunny' %}mdi:weather-sunny
+        {% elif c == 'windy' %}mdi:weather-windy
+        {% elif c == 'windy-variant' %}mdi:weather-windy-variant
+        {% elif c == 'exceptional' %}mdi:cloud-alert
         {% else %}mdi:sun-thermometer{% endif %}
- 
+      ai_instructions: >-
+        Erstelle eine Wettervorhersage auf Deutsch. Beginne direkt ohne Einleitung.
+        Fasse Heute und Morgen in 1-2 Saetzen zusammen.
+        Beschreibe danach den Wettertrend der naechsten Tage in 1-2 Saetzen
+        (z.B. ob es waermer, kaelter oder trockener wird).
+
+        {% for day in forecast %}
+        {% set label = 'Heute' if loop.index0 == 0 else 'Morgen' if loop.index0 == 1 else 'Tag ' + loop.index0|string %}
+        {{ label }}: {{ translations.get(day.condition, day.condition) }},
+        {{ day.temperature }} bis {{ day.templow }} {{ state_attr(weather_entity, 'temperature_unit') }},
+        Niederschlag: {{ day.precipitation }} {{ state_attr(weather_entity, 'precipitation_unit') }},
+        Wind: {{ day.wind_speed }} {{ state_attr(weather_entity, 'wind_speed_unit') }}.
+        {% endfor %}
+
+        Windrichtung heute: {{ state_attr(alternative_weather_entity, 'wind_bearing') | default('unbekannt') }} Grad.
+
+  - if:
+      - condition: template
+        value_template: "{{ ai_summary == 'ai' }}"
+    then:
+      - if:
+          - condition: template
+            value_template: "{{ ai_task_entity != '' }}"
+        then:
+          - action: ai_task.generate_data
+            data:
+              task_name: wettervorhersage benachrichtigung
+              entity_id: "{{ ai_task_entity }}"
+              instructions: "{{ ai_instructions }}"
+            response_variable: ai_result
+        else:
+          - action: ai_task.generate_data
+            data:
+              task_name: wettervorhersage benachrichtigung
+              instructions: "{{ ai_instructions }}"
+            response_variable: ai_result
+
+  - variables:
+      ai_text: >-
+        {% if ai_summary == 'ai' and ai_result is defined and ai_result.data is defined %}
+          {{ ai_result.data }}
+        {% else %}
+          {{ '' }}
+        {% endif %}
+
   - repeat:
       for_each: !input notify_device
-      sequence: 
-        - service: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+      sequence:
+        - variables:
+            should_notify: >-
+              {% if presence_sensors | length == 0 and wifi_sensors | length == 0 %}
+                true
+              {% else %}
+                {% set idx = repeat.index - 1 %}
+                {% set presence_ok = namespace(value=true) %}
+                {% set wifi_ok = namespace(value=true) %}
+
+                {% if presence_sensors | length > idx %}
+                  {% set sensor = presence_sensors[idx] %}
+                  {% set domain = sensor.split('.')[0] %}
+                  {% if domain == 'person' %}
+                    {% set currently_home = states(sensor) == 'home' %}
+                    {% set tracker_home = state_attr(sensor, 'device_trackers') | default([]) |
+                       map('states') | select('eq', 'home') | list | length > 0 %}
+                    {% set recently_home = states(sensor) not in ['unavailable', 'unknown'] and
+                       (now() - states[sensor].last_changed).total_seconds() < 7200 %}
+                    {% set presence_ok.value = currently_home or tracker_home or recently_home %}
+                  {% else %}
+                    {% set presence_ok.value = states(sensor) == 'on' %}
+                  {% endif %}
+                {% endif %}
+
+                {% if wifi_sensors | length > idx %}
+                  {% set wifi_ok.value = states(wifi_sensors[idx]) == 'on' %}
+                {% endif %}
+
+                {{ presence_ok.value or wifi_ok.value }}
+              {% endif %}
+
+        - condition: template
+          value_template: "{{ should_notify | trim | lower == 'true' }}"
+
+        - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
           data:
             title: "{{ notification_title }}"
-            message: >
+            message: >-
               {% set translations = {
-                'cloudy': 'Bewölkt',
-                'fog': 'Nebel',
-                'hail': 'Hagel',
-                'lightning': 'Blitze',
-                'lightning-rainy': 'Gewitterregen',
-                'partlycloudy': 'Teilweise bewölkt',
-                'pouring': 'Starker Regen',
-                'rainy': 'Regnerisch',
-                'snowy': 'Schneefall',
-                'snowy-rainy': 'Schneeregen',
-                'sunny': 'Sonnig',
-                'windy': 'Windig',
-                'windy-variant': 'Windig',
-                'exceptional': 'Außergewöhnlich'
+                'cloudy': 'Bewoelkt', 'fog': 'Nebel', 'hail': 'Hagel',
+                'lightning': 'Blitze', 'lightning-rainy': 'Gewitterregen',
+                'partlycloudy': 'Teilweise bewoelkt', 'pouring': 'Starker Regen',
+                'rainy': 'Regnerisch', 'snowy': 'Schneefall',
+                'snowy-rainy': 'Schneeregen', 'sunny': 'Sonnig',
+                'windy': 'Windig', 'windy-variant': 'Windig',
+                'exceptional': 'Aussergewoehnlich'
               } %}
-              
+              {% set ns = namespace(lines=[]) %}
               {% for message in notify_message %}
-                {% if "condition" in message %}Zustand: {{ translations.get(forecast[0].condition, 'Unbekannt') }}{% endif %}
-                {% if "temperature" in message %}Temp: {{forecast[0].temperature}} // {{forecast[0].templow}} {{ state_attr(weather_entity, 'temperature_unit') }}{% endif %}
-                {% if "precipitation" in message %}Niederschlag: {{forecast[0].precipitation}} {{ state_attr(weather_entity, 'precipitation_unit') }}{% endif %}
-                {% if "wind" in message %}
-                  Windgeschwindigkeit: {{forecast[0].wind_speed}} {{ state_attr(weather_entity, 'wind_speed_unit') }} // 
-                  {% set wind_direction = state_attr(alternative_weather_entity, 'wind_bearing') %}
-                  Windrichtung: {{ wind_direction if wind_direction is not none else 'Unbekannt'}}
+                {% if 'condition' in message %}
+                  {% set ns.lines = ns.lines + ['Zustand: ' + translations.get(forecast[0].condition, 'Unbekannt')] %}
+                {% endif %}
+                {% if 'temperature' in message %}
+                  {% set ns.lines = ns.lines + ['Temp: ' + forecast[0].temperature|string + ' // ' + forecast[0].templow|string + ' ' + state_attr(weather_entity, 'temperature_unit')] %}
+                {% endif %}
+                {% if 'precipitation' in message %}
+                  {% set ns.lines = ns.lines + ['Niederschlag: ' + forecast[0].precipitation|string + ' ' + state_attr(weather_entity, 'precipitation_unit')] %}
+                {% endif %}
+                {% if 'wind' in message %}
+                  {% set ns.lines = ns.lines + ['Wind: ' + forecast[0].wind_speed|string + ' ' + state_attr(weather_entity, 'wind_speed_unit') + ' // ' + state_attr(alternative_weather_entity, 'wind_bearing')|default('Unbekannt')|string + ' Grad'] %}
                 {% endif %}
               {% endfor %}
-    
-              {% if tomorrow_message == 'tomorrow' %}
-                {{"\r\n"}}Morgen: 
-                Temp: {{forecast[1].temperature}} // {{forecast[1].templow}} {{ state_attr(weather_entity, 'temperature_unit') }},
-                Niederschlag: {{forecast[1].precipitation}} {{ state_attr(weather_entity, 'precipitation_unit') }}
+              {% if tomorrow_message == 'tomorrow' and has_tomorrow %}
+                {% set ns.lines = ns.lines + ['', 'Morgen (' + translations.get(forecast[1].condition, 'Unbekannt') + '):', 'Temp: ' + forecast[1].temperature|string + ' // ' + forecast[1].templow|string + ' ' + state_attr(weather_entity, 'temperature_unit'), 'Niederschlag: ' + forecast[1].precipitation|string + ' ' + state_attr(weather_entity, 'precipitation_unit')] %}
               {% endif %}
+              {{ ns.lines | join('\n') }}
             data:
-              notification_icon: "{{ icon }}"
+              notification_icon: "{{ icon | trim }}"
+
+        - if:
+            - condition: template
+              value_template: "{{ ai_summary == 'ai' and ai_text | trim != '' }}"
+          then:
+            - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+              data:
+                title: "{{ notification_title }} – KI-Zusammenfassung"
+                message: "🤖 {{ ai_text | trim }}"
+                data:
+                  notification_icon: "{{ icon | trim }}"
