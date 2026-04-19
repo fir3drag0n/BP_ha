@@ -76,8 +76,7 @@ blueprint:
       description: >
         Ein binary_sensor oder person-Entität pro Gerät in der gleichen Reihenfolge
         wie die Geräteliste. Bei person-Entitäten wird zusätzlich geprüft ob einer
-        der verknüpften device_tracker home ist, sowie ob die Person in den letzten
-        2 Stunden home war (Fallback für Tiefschlaf).
+        der verknüpften device_tracker home ist.
         Leer lassen um immer zu senden.
       default: []
       selector:
@@ -91,7 +90,7 @@ blueprint:
       name: WLAN-Sensoren (optional)
       description: >
         Ein binary_sensor pro Gerät in der gleichen Reihenfolge wie die Geräteliste.
-        Wird mit dem Anwesenheitssensor per OR verknüpft – es reicht wenn einer
+        Wird mit dem Anwesenheitssensor per OR verknüpft - es reicht wenn einer
         der beiden zutrifft. Leer lassen um nur Anwesenheit zu prüfen.
       default: []
       selector:
@@ -251,9 +250,7 @@ actions:
                     {% set currently_home = states(sensor) == 'home' %}
                     {% set tracker_home = state_attr(sensor, 'device_trackers') | default([]) |
                        map('states') | select('eq', 'home') | list | length > 0 %}
-                    {% set recently_home = states(sensor) not in ['unavailable', 'unknown'] and
-                       (now() - states[sensor].last_changed).total_seconds() < 7200 %}
-                    {% set presence_ok.value = currently_home or tracker_home or recently_home %}
+                    {% set presence_ok.value = currently_home or tracker_home %}
                   {% else %}
                     {% set presence_ok.value = states(sensor) == 'on' %}
                   {% endif %}
@@ -314,3 +311,4 @@ actions:
                 message: "🤖 {{ ai_text | trim }}"
                 data:
                   notification_icon: "{{ icon | trim }}"
+                  
