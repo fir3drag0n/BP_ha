@@ -31,7 +31,7 @@ blueprint:
     **Version**: 22.0
 
   domain: automation
-  source_url: https://raw.githubusercontent.com/fir3drag0n/BP_ha/main/dynamische_abdeckung_v22.yaml
+  source_url: https://example.com/blueprints/dynamische_abdeckung_v22.yaml
   homeassistant:
     min_version: "2024.10.0"
 
@@ -1180,7 +1180,7 @@ action:
         {% endif %}
 
       # Soll die Sonnenstand-Prio schließen?
-      sun_wants_close: "{% set s = sun_az_start | float(0) %}{% set e = sun_az_end | float(0) %}{% set a = azimuth | float(0) %}{% if s == 0 and e == 360 %}{% set in_range = true %}{% elif s > e %}{% set in_range = (a >= s or a <= e) %}{% else %}{% set in_range = (a >= s and a <= e) %}{% endif %}{% set elev = elevation | float(0) %}{% set close_th = sun_close_thresh | float(0) %}{% if sun_mode == 'sunrise_sunset' %}{% set sun_up = (sun_is_up_with_offset | string | lower) == 'true' %}{{ (not sun_up) and in_range }}{% elif sun_mode == 'elevation' %}{{ (elev < close_th) and in_range }}{% else %}{{ false }}{% endif %}"
+      sun_wants_close: "{% set elev = elevation | float(0) %}{% set close_th = sun_close_thresh | float(0) %}{% if sun_mode == 'sunrise_sunset' %}{% set sun_up = (sun_is_up_with_offset | string | lower) == 'true' %}{{ not sun_up }}{% elif sun_mode == 'elevation' %}{{ elev < close_th }}{% else %}{{ false }}{% endif %}"
 
       # Soll die Sonnenstand-Prio öffnen?
       sun_wants_open: "{% set s = sun_az_start | float(0) %}{% set e = sun_az_end | float(0) %}{% set a = azimuth | float(0) %}{% if s == 0 and e == 360 %}{% set in_range = true %}{% elif s > e %}{% set in_range = (a >= s or a <= e) %}{% else %}{% set in_range = (a >= s and a <= e) %}{% endif %}{% set elev = elevation | float(0) %}{% set open_th = sun_open_thresh | float(0) %}{% if sun_mode == 'sunrise_sunset' %}{% set sun_up = (sun_is_up_with_offset | string | lower) == 'true' %}{{ sun_up and in_range }}{% elif sun_mode == 'elevation' %}{{ (elev > open_th) and in_range }}{% else %}{{ false }}{% endif %}"
