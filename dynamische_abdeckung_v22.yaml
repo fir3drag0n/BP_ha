@@ -1290,10 +1290,9 @@ action:
           {% set pos_diff = (current_pos | int - last_known_pos | int) | abs > tolerance | int %}
           {% if pos_diff and manual_override_dur_sec | int > 0 %}
             {% if auto_ts_entity != '' and auto_ts_entity in states %}
-              {% set last_moved = states[auto_ts_entity].state | as_datetime %}
-              {% set ts_valid = last_moved is not none and last_moved.year >= 2020 %}
-              {% if ts_valid %}
-                {% set expired = (now() - last_moved).total_seconds() > manual_override_dur_sec | int %}
+              {% set stored_ts = state_attr(auto_ts_entity, 'timestamp') | float(-1) %}
+              {% if stored_ts > 0 %}
+                {% set expired = (now().timestamp() - stored_ts) > manual_override_dur_sec | int %}
               {% else %}
                 {# Helfer noch nie vom Blueprint gesetzt → Override als aktiv annehmen #}
                 {% set expired = false %}
@@ -1662,7 +1661,7 @@ action:
                 target:
                   entity_id: "{{ auto_ts_entity }}"
                 data:
-                  datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+                  timestamp: "{{ now().timestamp() | int }}"
 
       # Tilt setzen
       - if:
