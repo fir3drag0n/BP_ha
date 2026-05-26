@@ -920,6 +920,26 @@ blueprint:
               domain: input_number
           default: ""
 
+        manual_override_auto_ts:
+          name: "🕐 Blueprint-Fahrt-Zeitstempel (input_datetime)"
+          description: >
+            `optional` — Nur für Modus `auto`.
+
+
+            Erstelle unter **Einstellungen → Helfer → + → Datum und/oder Zeit**
+            einen Helfer mit Datum UND Uhrzeit.
+            Z.B. `input_datetime.letzte_blueprint_fahrt_wohnzimmer`.
+
+
+            Das Blueprint setzt diesen Helfer automatisch bei jeder eigenen
+            Fahrt. Der Abstand zwischen letzter Blueprint-Fahrt und jetzt wird
+            gegen `override_dur_min` geprüft — so läuft der manuelle Override
+            zuverlässig ab, auch wenn die Position sich nicht geändert hat.
+          selector:
+            entity:
+              domain: input_datetime
+          default: ""
+
         manual_override_datetime:
           name: "✋ Override-Zeitstempel (input_datetime)"
           description: >
@@ -1050,6 +1070,7 @@ action:
       schedule_entity: !input time_schedule
       cloud_entity: !input cloud_coverage_sensor
       override_entity: !input manual_override_datetime
+      auto_ts_entity: !input manual_override_auto_ts
       override_mode: !input manual_override_mode
       last_pos_entity: !input manual_override_last_pos
       window_list: !input window_sensors
@@ -1268,10 +1289,16 @@ action:
         {% if override_mode == 'auto' and last_pos_entity != '' and last_known_pos | int >= 0 %}
           {% set pos_diff = (current_pos | int - last_known_pos | int) | abs > tolerance | int %}
           {% if pos_diff and manual_override_dur_sec | int > 0 %}
-            {% set last_set = states[last_pos_entity].last_changed
-                              if last_pos_entity in states else none %}
-            {% set expired = last_set is none or
-               (now() - last_set).total_seconds() > manual_override_dur_sec | int %}
+            {% if auto_ts_entity != '' and auto_ts_entity in states %}
+              {% set last_moved = states[auto_ts_entity].state | as_datetime %}
+              {% set expired = last_moved is none or
+                 (now() - last_moved).total_seconds() > manual_override_dur_sec | int %}
+            {% else %}
+              {% set last_set = states[last_pos_entity].last_changed
+                                if last_pos_entity in states else none %}
+              {% set expired = last_set is none or
+                 (now() - last_set).total_seconds() > manual_override_dur_sec | int %}
+            {% endif %}
             {{ not expired }}
           {% else %}
             {{ pos_diff }}
@@ -1621,6 +1648,16 @@ action:
                   entity_id: "{{ last_pos_entity }}"
                 data:
                   value: "{{ target_position | int }}"
+          # Auto-Override: Blueprint-Fahrt-Zeitstempel aktualisieren
+          - if:
+              - condition: template
+                value_template: "{{ override_mode == 'auto' and auto_ts_entity != '' }}"
+            then:
+              - service: input_datetime.set_datetime
+                target:
+                  entity_id: "{{ auto_ts_entity }}"
+                data:
+                  datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
 
       # Tilt setzen
       - if:
