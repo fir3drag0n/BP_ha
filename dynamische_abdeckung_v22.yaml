@@ -1291,8 +1291,13 @@ action:
           {% if pos_diff and manual_override_dur_sec | int > 0 %}
             {% if auto_ts_entity != '' and auto_ts_entity in states %}
               {% set last_moved = states[auto_ts_entity].state | as_datetime %}
-              {% set expired = last_moved is none or
-                 (now() - last_moved).total_seconds() > manual_override_dur_sec | int %}
+              {% set ts_valid = last_moved is not none and last_moved.year >= 2020 %}
+              {% if ts_valid %}
+                {% set expired = (now() - last_moved).total_seconds() > manual_override_dur_sec | int %}
+              {% else %}
+                {# Helfer noch nie vom Blueprint gesetzt → Override als aktiv annehmen #}
+                {% set expired = false %}
+              {% endif %}
             {% else %}
               {% set last_set = states[last_pos_entity].last_changed
                                 if last_pos_entity in states else none %}
