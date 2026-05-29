@@ -1466,7 +1466,7 @@ action:
           # Auto-Override: Soll-Position speichern
           - if:
               - condition: template
-                value_template: "{{ override_mode == 'auto' and last_pos_entity != '' }}"
+                value_template: "{{ last_pos_entity != '' }}"
             then:
               - service: input_number.set_value
                 target:
@@ -1666,7 +1666,7 @@ action:
           # Auto-Override: Soll-Position speichern
           - if:
               - condition: template
-                value_template: "{{ override_mode == 'auto' and last_pos_entity != '' }}"
+                value_template: "{{ last_pos_entity != '' }}"
             then:
               - service: input_number.set_value
                 target:
