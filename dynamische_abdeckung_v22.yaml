@@ -1559,7 +1559,7 @@ action:
               {{ current_pos }}
             {% endif %}
           {% elif _sun_open %}
-            {% if not _blk_open %}
+            {% if not _blk_open and (not _has_sched or _in_time) %}
               {{ pos_open | int }}
             {% else %}
               {{ current_pos }}
