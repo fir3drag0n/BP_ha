@@ -1,0 +1,154 @@
+blueprint:
+  name: TTS on door opening with persons at home
+  description: >-
+    `- Version: 2.0 -`
+
+
+    Plays a TTS greeting on a media player when the door is opened shortly after
+    one or more persons arrived home.
+
+    Based on [rokam's gist](https://gist.github.com/rokam/22fd6e497fbe61478fda4d0fc8215abf)
+    (last change 2024, no longer maintained). Changes: choose a TTS entity
+    (`tts.speak`, falls back to the legacy `tts.google_translate_say` when empty),
+    several persons can be picked in the UI, current automation syntax.
+  domain: automation
+  source_url: https://github.com/fir3drag0n/BP_ha/blob/main/tts-door-opening.yaml
+  input:
+    door_sensor:
+      name: Door sensor
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: door
+    persons:
+      name: Persons
+      description: Persons to greet (a comma separated string from older configs still works).
+      selector:
+        entity:
+          domain: person
+          multiple: true
+    minutes:
+      name: Minutes
+      description: Greet only persons who arrived home within this many minutes before the door opened.
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          unit_of_measurement: min
+          mode: slider
+    message-single:
+      name: Message single person
+      description: One possible message per line, picked at random. `<person>` is replaced by the name.
+      selector:
+        text:
+          multiline: true
+    message-multiple:
+      name: Message multiple persons
+      description: One possible message per line, picked at random. `<persons>` is replaced by the names.
+      selector:
+        text:
+          multiline: true
+    persons-concat:
+      name: Text to concatenate the persons' names
+      description: Used between the last two names.
+      default: " and "
+      selector:
+        text:
+    target:
+      name: Target devices
+      description: Media player(s) that play the TTS message.
+      selector:
+        entity:
+          domain: media_player
+          multiple: true
+    tts_entity:
+      name: TTS entity
+      description: TTS engine for `tts.speak` (e.g. tts.home_assistant_cloud). Leave empty to use the legacy tts.google_translate_say.
+      default: ""
+      selector:
+        entity:
+          domain: tts
+    language:
+      name: Language
+      description: Optional language for `tts.speak` (e.g. de-DE). Empty = engine default.
+      default: ""
+      selector:
+        text:
+    condition:
+      name: Condition to run
+      description: A template that must render true for the greeting to play.
+      default: "True"
+      selector:
+        text:
+    actions:
+      name: Additional actions
+      description: Run after the greeting.
+      default: []
+      selector:
+        action: {}
+
+mode: single
+max_exceeded: silent
+
+variables:
+  persons_in: !input persons
+  persons_list: >-
+    {{ (persons_in if persons_in is list else persons_in.split(',')) | map('trim') | reject('eq', '') | list }}
+  timeout: !input minutes
+  concat_str: !input persons-concat
+  tts_entity: !input tts_entity
+  target_players: !input target
+  language: !input language
+  persons_count: >-
+    {%- set data = namespace(names=[]) -%}
+    {%- for person in persons_list -%}
+      {%- if is_state(person, 'home') and (now() - states[person].last_changed).total_seconds() < timeout * 60 -%}
+        {%- set data.names = data.names + [states[person].name] -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {{ data.names }}
+  persons_names: >-
+    {%- set joined = ', '.join(persons_count) -%}
+    {{ concat_str.join(joined.rsplit(', ', 1)) }}
+  single_msg: !input message-single
+  multiple_msg: !input message-multiple
+  tts_message: >-
+    {%- if persons_count | length > 1 -%}
+      {{ multiple_msg.split('\n') | reject('eq', '') | list | random | replace('<persons>', persons_names) }}
+    {%- else -%}
+      {{ single_msg.split('\n') | reject('eq', '') | list | random | replace('<person>', persons_names) }}
+    {%- endif -%}
+
+triggers:
+  - trigger: state
+    entity_id: !input door_sensor
+    from: "off"
+    to: "on"
+
+conditions:
+  - condition: template
+    value_template: !input condition
+  - condition: template
+    value_template: "{{ persons_count | length > 0 }}"
+
+actions:
+  - if:
+      - condition: template
+        value_template: "{{ tts_entity | length > 0 }}"
+    then:
+      - action: tts.speak
+        target:
+          entity_id: "{{ tts_entity }}"
+        data: >-
+          {%- set d = {'media_player_entity_id': target_players, 'message': tts_message} -%}
+          {%- if language | length > 0 -%}{%- set d = dict(d, language=language) -%}{%- endif -%}
+          {{ d }}
+    else:
+      - action: tts.google_translate_say
+        data:
+          entity_id: !input target
+          message: "{{ tts_message }}"
+  - choose: []
+    default: !input actions

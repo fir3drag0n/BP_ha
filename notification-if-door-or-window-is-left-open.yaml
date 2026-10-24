@@ -1,76 +1,83 @@
 blueprint:
-  source_url: 'https://community.home-assistant.io/t/notification-if-door-or-window-is-left-open/402851.json'
   name: Contact Sensor Left Open Notification
-  description: > 
-    Notifies you when a door or window is left open. 
+  description: >-
+    `- Version: 2.0 -`
 
-    For more information on setting the click url, please visit the companion docs:
+
+    Notifies you when a door or window is left open, and can optionally clear the
+    notification again once it is closed.
+
+    Based on the community blueprint
+    [Notification if Door or Window is left open](https://community.home-assistant.io/t/notification-if-door-or-window-is-left-open/402851)
+    (2022, no longer maintained).
+
+    For more information on the click url, see the companion docs:
     https://companion.home-assistant.io/docs/notifications/notifications-basic/#opening-a-url
 
-    If you'd like to notify multiple people, use a notify group: 
-    https://www.home-assistant.io/integrations/notify.group/
-
+    To notify multiple people, use a notify group: https://www.home-assistant.io/integrations/notify.group/
   domain: automation
+  source_url: https://github.com/fir3drag0n/BP_ha/blob/main/notification-if-door-or-window-is-left-open.yaml
   input:
     entity:
       name: Entity
-      description: The entity that will trigger the automation. This must be a binary sensor. (ie. binary_sensor.fridge)
+      description: The entity that will trigger the automation. This must be a binary sensor (e.g. binary_sensor.fridge).
       selector:
         entity:
           domain: binary_sensor
     friendly_name:
-      name: Device Friendly Name
-      description: What should we call the entity in the notification? (ie. Fridge)
-      default: \"\"
+      name: Friendly Name
+      description: The name used in the notification (available as {{ friendly_name }}).
+      default: ""
       selector:
         text:
     issue_state:
       name: Issue State
-      description: The state that triggers the automation. Because this is a binary sensor, it can only be on or off. Use the developer tools to find the correct setting.
-      default: \"on\"
+      description: The state that triggers the automation. For a door or window sensor this is usually "on".
+      default: "on"
       selector:
         select:
           options:
-            - \"on\"
-            - \"off\"
+            - "on"
+            - "off"
     seconds:
-      name: Seconds before alert
-      description: The amount of time in seconds that the device can be in the issue state before an alert is triggered.
-      default: \"150\"
+      name: Seconds
+      description: How long (in seconds) the entity has to stay in the issue state before the notification is sent.
+      default: 150
       selector:
         number:
           min: 1
           max: 3600
-          mode: box
+          step: 1
           unit_of_measurement: seconds
+          mode: slider
     notify_service:
       name: Notify Service
-      description: The service that will be called to deliver the notification. (ie. notify.mobile_app_my_phone)
-      default: \"notify.mobile_app_YOURDEVICE\"
+      description: The notify action that delivers the notification (e.g. notify.mobile_app_my_phone).
+      default: notify.mobile_app_YOURDEVICE
       selector:
         text:
     click_url:
       name: Click URL
-      description: Where the user will be taken if they tap the notification. (ie. /lovelace/kitchen)
-      default: \"/lovelace/ROOM\"
+      description: Where the user is taken when tapping the notification (e.g. /lovelace/kitchen).
+      default: /lovelace/ROOM
       selector:
         text:
     title:
-      name: Notification Title
-      description: The title of the notification. 
-      default: \"The {{friendly_name}} was left open\"
+      name: Title
+      description: The title of the notification.
+      default: "The {{ friendly_name }} was left open"
       selector:
         text:
     message:
-      name: Notification Message
-      description: The message of the notification.
-      default: \"The {{friendly_name}} was left open at {{now().hour}}:{{now().minute}}:{{now().second}}.\"
+      name: Message
+      description: The body of the notification.
+      default: "The {{ friendly_name }} was left open at {{ now().strftime('%H:%M:%S') }}."
       selector:
         text:
     notification_icon_warning:
-      name: Notification Icon (Android Only)
-      description: The icon that is shown when the issue is reported. (ie. mdi:fridge-alert)
-      default: \"alert\"
+      name: Notification Icon
+      description: "Material Design icon without the mdi prefix (Android only)."
+      default: alert
       selector:
         select:
           options:
@@ -84,23 +91,24 @@ blueprint:
             - home
             - home-alert
             - home-assistant
+          custom_value: true
     notification_color:
-      name: Notification Color (Android Only)
-      description: The color of the notification.
-      default: \"red\"
+      name: Notification Color
+      description: Notification color (Android only).
+      default: red
       selector:
         select:
           options:
-            - \"red\"
-            - \"orange\"
-            - \"yellow\"
-            - \"green\"
-            - \"blue\"
-            - \"purple\"
+            - red
+            - orange
+            - yellow
+            - green
+            - blue
+            - purple
     interruption_level:
-      name: Interruption Level (iOS Only)
-      description: The intrusiveness of the notification recieved. This also determines whether the notification will be delivered while the device is in a focus mode.
-      default: \"active\"
+      name: Interruption Level
+      description: How intrusive the notification is (iOS only); also decides whether it is delivered during a focus mode.
+      default: active
       selector:
         select:
           options:
@@ -108,31 +116,64 @@ blueprint:
             - active
             - time-sensitive
             - critical
+    clear_when_closed:
+      name: Clear notification when closed
+      description: Remove the notification from the phone as soon as the entity leaves the issue state.
+      default: false
+      selector:
+        boolean:
+
+mode: restart
+max_exceeded: silent
+
 variables:
   friendly_name: !input friendly_name
   entity: !input entity
-  click_url: !input click_url
+  issue_state: !input issue_state
+  clear_when_closed: !input clear_when_closed
   notification_icon_warning: !input notification_icon_warning
 
-trigger:
-  platform: state
-  entity_id: !input entity
-  to: !input issue_state
-  for:
-    hours: 0
-    minutes: 0
-    seconds: !input seconds
-action:
-- service: !input notify_service
-  data:
-    message: !input message
-    title: !input title
-    data:
-      clickAction: !input click_url
-      url: !input click_url
-      tag: !input entity
-      color: !input notification_color
-      notification_icon: 'mdi:{{ notification_icon_warning }}'
-      push:
-        interruption-level: !input interruption_level
+triggers:
+  - trigger: state
+    entity_id: !input entity
+    to: !input issue_state
+    for:
+      seconds: !input seconds
+    id: left_open
+  - trigger: state
+    entity_id: !input entity
+    from: !input issue_state
+    not_to:
+      - unavailable
+      - unknown
+    id: closed
 
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: left_open
+        sequence:
+          - action: !input notify_service
+            data:
+              title: !input title
+              message: !input message
+              data:
+                clickAction: !input click_url
+                url: !input click_url
+                tag: "{{ entity }}"
+                color: !input notification_color
+                notification_icon: "mdi:{{ notification_icon_warning }}"
+                push:
+                  interruption-level: !input interruption_level
+      - conditions:
+          - condition: trigger
+            id: closed
+          - condition: template
+            value_template: "{{ clear_when_closed }}"
+        sequence:
+          - action: !input notify_service
+            data:
+              message: clear_notification
+              data:
+                tag: "{{ entity }}"

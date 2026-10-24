@@ -1,0 +1,67 @@
+blueprint:
+  name: Door-activated cabinet light with timeout
+  description: >-
+    `- Version: 2.0 -`
+
+
+    Turns on a light when the cabinet is opened and turns it off when it is closed.
+    If the door stays open, the light is turned off after the timeout.
+
+    Based on [OliverHi/blueprints cabinet_light](https://github.com/OliverHi/blueprints/blob/main/cabinet_light.yaml)
+    (last change 2023), extended with a timeout and protection against
+    `unavailable` → `on` after restarts or reconnects.
+  domain: automation
+  source_url: https://github.com/fir3drag0n/BP_ha/blob/main/cabinet_light.yaml
+  input:
+    door_entity:
+      name: Door magnet open/closed sensor
+      selector:
+        entity:
+          domain: binary_sensor
+    light_target:
+      name: Light
+      selector:
+        entity:
+          domain: light
+    timeout:
+      name: Timeout
+      description: Turn the light off after this time even if the door is still open.
+      default:
+        minutes: 5
+      selector:
+        duration:
+
+mode: restart
+max_exceeded: silent
+
+triggers:
+  - trigger: state
+    entity_id: !input door_entity
+    from: "off"
+    to: "on"
+    id: opened
+  - trigger: state
+    entity_id: !input door_entity
+    to: "off"
+    id: closed
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: opened
+        sequence:
+          - action: light.turn_on
+            target:
+              entity_id: !input light_target
+          - delay: !input timeout
+          - action: light.turn_off
+            target:
+              entity_id: !input light_target
+      - conditions:
+          - condition: trigger
+            id: closed
+        sequence:
+          - action: light.turn_off
+            target:
+              entity_id: !input light_target
