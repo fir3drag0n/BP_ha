@@ -1,0 +1,127 @@
+blueprint:
+  name: Low battery notification (one line per device)
+  description: >-
+    `- Version: 1.0 -`
+
+
+    Checks all battery sensors (`device_class: battery`, numeric and binary) at a set
+    time and runs your actions when at least one is low.
+
+    Based on [sbyx's low battery blueprint](https://gist.github.com/sbyx/1f6f434f0903b872b84c4302637d0890).
+    Differences:
+
+    * **One entry per device**: several battery entities of the same device (e.g. the
+      original sensor plus Battery Notes' `battery_plus` and `battery_plus_low`) are merged,
+      the lowest level wins.
+
+    * **Exclusions work for entities, devices and labels** (the original only honoured entities).
+
+    * Device name instead of entity name, optional battery type from Battery Notes.
+
+    * Ready-made variables for the message:
+      `{{ sensors }}` (comma separated, like the original), `{{ sensors_list }}`
+      (one line per device, lowest first) and `{{ sensors_count }}`.
+  domain: automation
+  source_url: https://github.com/fir3drag0n/BP_ha/blob/main/low_battery_notification.yaml
+  input:
+    threshold:
+      name: Battery warning level threshold
+      description: Numeric battery sensors below this level count as low (binary battery sensors count when "on").
+      default: 20
+      selector:
+        number:
+          min: 5
+          max: 100
+          step: 5
+          unit_of_measurement: "%"
+          mode: slider
+    time:
+      name: Time to test on
+      default: "10:00:00"
+      selector:
+        time:
+    day:
+      name: Weekday to test on
+      description: "0 = every day, 1 = Monday … 7 = Sunday"
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 7
+          mode: slider
+    exclude:
+      name: Excluded sensors
+      description: Entities, devices or labels to ignore (e.g. foreign 433 MHz sensors).
+      default: {}
+      selector:
+        target:
+          entity:
+            - device_class: battery
+    actions:
+      name: Actions
+      description: >-
+        Notification or other actions. Available variables:
+        sensors, sensors_list, sensors_count.
+      selector:
+        action: {}
+
+mode: single
+max_exceeded: silent
+
+variables:
+  day: !input day
+  threshold: !input threshold
+  exclude: !input exclude
+  low_batteries: >-
+    {%- macro as_list(v) -%}{{ (v if v is list else ([v] if v else [])) | tojson }}{%- endmacro -%}
+    {%- set ex = exclude if exclude is mapping else {} -%}
+    {%- set ns = namespace(ex=as_list(ex.get('entity_id')) | from_json, items=[]) -%}
+    {%- for d in as_list(ex.get('device_id')) | from_json -%}{%- set ns.ex = ns.ex + device_entities(d) -%}{%- endfor -%}
+    {%- for l in as_list(ex.get('label_id')) | from_json -%}{%- set ns.ex = ns.ex + label_entities(l) -%}{%- endfor -%}
+    {%- for s in states.sensor | selectattr('attributes.device_class', 'eq', 'battery') -%}
+      {%- set lvl = s.state | float(-1) -%}
+      {%- if 0 <= lvl < threshold | float and s.entity_id not in ns.ex -%}
+        {%- set ns.items = ns.items + [{'key': device_id(s.entity_id) or s.entity_id, 'entity': s.entity_id, 'level': lvl}] -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {%- for s in states.binary_sensor | selectattr('attributes.device_class', 'eq', 'battery') | selectattr('state', 'eq', 'on') -%}
+      {%- if s.entity_id not in ns.ex -%}
+        {%- set ns.items = ns.items + [{'key': device_id(s.entity_id) or s.entity_id, 'entity': s.entity_id, 'level': -1}] -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {%- set out = namespace(list=[]) -%}
+    {%- for key, group in ns.items | groupby('key') -%}
+      {%- set levels = group | map(attribute='level') | select('ge', 0) | list -%}
+      {%- set first = group | first -%}
+      {%- set dev = device_id(first.entity) -%}
+      {%- set name = (device_attr(dev, 'name_by_user') or device_attr(dev, 'name')) if dev else state_attr(first.entity, 'friendly_name') -%}
+      {%- set te = (device_entities(dev) | select('match', '^sensor\..*_battery_type$') | list) if dev else [] -%}
+      {%- set type_entity = te[0] if te else none -%}
+      {%- set out.list = out.list + [{
+            'name': name or first.entity,
+            'level': (levels | min | round(0) | int) if levels else -1,
+            'type': states(type_entity) if type_entity and states(type_entity) not in ['unknown', 'unavailable', ''] else ''
+          }] -%}
+    {%- endfor -%}
+    {{ out.list | sort(attribute='level') }}
+  sensors_count: "{{ low_batteries | length }}"
+  sensors: >-
+    {%- set ns = namespace(l=[]) -%}
+    {%- for b in low_batteries -%}{%- set ns.l = ns.l + [b.name ~ ' (' ~ ((b.level ~ ' %') if b.level >= 0 else 'low') ~ ')'] -%}{%- endfor -%}
+    {{ ns.l | join(', ') }}
+  sensors_list: |-
+    {%- for b in low_batteries -%}
+    • {{ b.name }} – {{ (b.level ~ ' %') if b.level >= 0 else 'niedrig' }}{{ (' (' ~ b.type ~ ')') if b.type else '' }}
+    {% endfor -%}
+
+triggers:
+  - trigger: time
+    at: !input time
+
+conditions:
+  - condition: template
+    value_template: "{{ sensors_count | int > 0 and (day | int == 0 or day | int == now().isoweekday()) }}"
+
+actions:
+  - choose: []
+    default: !input actions
