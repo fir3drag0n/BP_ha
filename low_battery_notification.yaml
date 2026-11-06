@@ -1,7 +1,7 @@
 blueprint:
   name: Low battery notification (one line per device)
   description: >-
-    `- Version: 1.1 -`
+    `- Version: 1.2 -`
 
 
     Checks all battery sensors (`device_class: battery`, numeric and binary) at a set
@@ -18,7 +18,8 @@ blueprint:
       A label excludes labelled entities *and* all entities of labelled devices, so the easiest
       way to manage exclusions is a label like `ignore battery` on the device.
 
-    * Device name instead of entity name, optional battery type from Battery Notes.
+    * Device name instead of entity name, optional battery type from Battery Notes. Keypad battery sensors
+      (entity id contains `keypad`, e.g. Nuki Keypad at an Opener) are listed as their own entry `<device> (Keypad)`.
 
     * Ready-made variables for the message:
       `{{ sensors }}` (comma separated, like the original), `{{ sensors_list }}`
@@ -88,7 +89,7 @@ variables:
     {%- endfor -%}
     {%- for s in states.binary_sensor | selectattr('attributes.device_class', 'eq', 'battery') | selectattr('state', 'eq', 'on') -%}
       {%- if s.entity_id not in ns.ex -%}
-        {%- set ns.items = ns.items + [{'key': device_id(s.entity_id) or s.entity_id, 'entity': s.entity_id, 'level': -1}] -%}
+        {%- set ns.items = ns.items + [{'key': (device_id(s.entity_id) or s.entity_id) ~ (':keypad' if 'keypad' in s.entity_id else ''), 'entity': s.entity_id, 'level': -1}] -%}
       {%- endif -%}
     {%- endfor -%}
     {%- set out = namespace(list=[]) -%}
@@ -100,7 +101,7 @@ variables:
       {%- set te = (device_entities(dev) | select('match', '^sensor\..*_battery_type$') | list) if dev else [] -%}
       {%- set type_entity = te[0] if te else none -%}
       {%- set out.list = out.list + [{
-            'name': name or first.entity,
+            'name': (name or first.entity) ~ (' (Keypad)' if 'keypad' in first.entity else ''),
             'level': (levels | min | round(0) | int) if levels else -1,
             'type': states(type_entity) if type_entity and states(type_entity) not in ['unknown', 'unavailable', ''] else ''
           }] -%}
